@@ -122,12 +122,20 @@
     };
 
     const speakText = async (text, voiceKey) => {
-        // Try Public TTS API first
+        // 1. Google Translate TTS (Unofficial, very robust)
+        if (voiceKey === 'google_en') {
+            try {
+                const url = `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(text)}&tl=en&client=tw-ob`;
+                const audio = new Audio(url);
+                await audio.play();
+                return true;
+            } catch(e) { console.warn("Google TTS failed", e); }
+        }
+
+        // 2. TikTok TTS API (via proxy)
         if (voiceKey && voiceKey.startsWith("api_")) {
             const apiVoice = voiceKey.replace("api_", "");
             try {
-                // Use a known working proxy or direct endpoint if CORS allows.
-                // We use a robust public wrapper for TikTok TTS voices.
                 const resp = await fetch("https://ottsy.weilbyte.dev/api/generation", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
@@ -136,22 +144,28 @@
                 const json = await resp.json();
                 if (json.data) {
                     const audio = new Audio(`data:audio/mp3;base64,${json.data}`);
-                    audio.play();
+                    await audio.play();
                     return true;
                 }
             } catch (e) {
-                console.error("TTS API Failed, falling back to native", e);
+                console.error("TTS API Failed, falling back to google", e);
+                // Fallback to Google if specific API fails
+                try {
+                    const url = `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(text)}&tl=en&client=tw-ob`;
+                    const audio = new Audio(url);
+                    await audio.play();
+                    return true;
+                } catch(err) {}
             }
         }
 
-        // Fallback to Native Browser TTS
+        // 3. Fallback: Browser Native (Only if absolutely necessary, but hidden from UI mostly)
         if ('speechSynthesis' in window) {
             const utterance = new SpeechSynthesisUtterance(text);
+            // Default to something good if available
             const voices = window.speechSynthesis.getVoices();
-            const selected = voices.find(v => v.voiceURI === voiceKey) || voices.find(v => v.name.includes("Google US English")) || voices[0];
+            const selected = voices.find(v => v.voiceURI === voiceKey) || voices.find(v => v.name.includes("Google US English"));
             if (selected) utterance.voice = selected;
-            utterance.rate = 1.1;
-            utterance.pitch = 1.0;
             window.speechSynthesis.speak(utterance);
             return true;
         }
@@ -650,26 +664,16 @@
         const [loadingNames, setLoadingNames] = useState(false);
         const [djLoading, setDjLoading] = useState(false);
         const [djPlaying, setDjPlaying] = useState(false);
-        const [availableVoices, setAvailableVoices] = useState([]);
-        const [selectedVoice, setSelectedVoice] = useState("api_en_us_001");
-
-        useEffect(() => {
-            const loadVoices = () => {
-                const nativeVoices = window.speechSynthesis.getVoices().map(v => ({ name: `(Native) ${v.name.slice(0,10)}...`, id: v.voiceURI }));
-                const aiVoices = [
-                    { name: "AI: Classic Female", id: "api_en_us_001" },
-                    { name: "AI: Classic Male", id: "api_en_us_006" },
-                    { name: "AI: Cool Guy", id: "api_en_us_002" },
-                    { name: "AI: Ghostface", id: "api_en_us_ghostface" },
-                    { name: "AI: Chewbacca", id: "api_en_us_chewbacca" },
-                    { name: "AI: Singing Soprano", id: "api_en_female_f08_salut_damour" },
-                    { name: "AI: Singing Tenor", id: "api_en_male_m03_lobby" }
-                ];
-                setAvailableVoices([...aiVoices, ...nativeVoices]);
-            };
-            loadVoices();
-            window.speechSynthesis.onvoiceschanged = loadVoices;
-        }, []);
+        const [availableVoices, setAvailableVoices] = useState([
+            { name: "Google AI (Reliable)", id: "google_en" },
+            { name: "TikTok: Classic F", id: "api_en_us_001" },
+            { name: "TikTok: Classic M", id: "api_en_us_006" },
+            { name: "TikTok: Cool Guy", id: "api_en_us_002" },
+            { name: "TikTok: Ghostface", id: "api_en_us_ghostface" },
+            { name: "TikTok: Chewbacca", id: "api_en_us_chewbacca" },
+            { name: "TikTok: Singing Soprano", id: "api_en_female_f08_salut_damour" }
+        ]);
+        const [selectedVoice, setSelectedVoice] = useState("google_en");
 
         const handleGenerateNames = async () => {
             if (!trackA || !trackB) return alert("Please load both tracks first!");
@@ -817,6 +821,9 @@
         const _voxPitch = useRef(null);
         const _voxDist = useRef(null);
         const _voxCheby = useRef(null);
+        const _voxReverb = useRef(null);
+        const _voxChorus = useRef(null);
+        const _voxBit = useRef(null);
 
         const canvasRef = useRef(null);
         const playheadRef = useRef(null);
@@ -833,60 +840,79 @@
             getDuration: () => duration
         }));
 
-        // Vocal FX Logic (Mock AI Formant Shifting)
+        // Vocal FX Logic (Mock AI Formant Shifting & Style Transfer)
         useEffect(() => {
-            if (!_voxPitch.current || !_voxDist.current || !_voxCheby.current) return;
-            // Reset Defaults
+            if (!_voxPitch.current) return;
+
+            // 1. Reset All Effects
             _voxPitch.current.pitch = 0;
             _voxDist.current.wet.value = 0;
             _voxDist.current.distortion = 0;
             _voxCheby.current.wet.value = 0;
+            _voxReverb.current.wet.value = 0;
+            _voxChorus.current.wet.value = 0;
+            _voxBit.current.wet.value = 0;
+
             midFilter.current.type = "lowpass";
             midFilter.current.frequency.value = 20000;
             midFilter.current.Q.value = 1;
 
+            // 2. Apply Presets
             if (vocalFx === "pop") {
-                // Brighter, tighter, slight high pitch (Fem/Pop)
-                _voxPitch.current.pitch = 3;
+                // Pop Diva: Pitch +2, Brightness, Reverb, Chorus (Thickener)
+                _voxPitch.current.pitch = 2.5;
                 midFilter.current.type = "highshelf";
-                midFilter.current.frequency.value = 3000;
-                midFilter.current.gain.value = 6;
+                midFilter.current.frequency.value = 3500;
+                midFilter.current.gain.value = 12; // Strong boost
+                _voxReverb.current.wet.value = 0.2; // Spatial
+                _voxChorus.current.wet.value = 0.3; // Width
             } else if (vocalFx === "trap") {
-                // Deep, dark, slightly distorted (Travis Scott style)
+                // Trap God: Pitch -3, Autotune-ish artifacts (Distortion), Dark
                 _voxPitch.current.pitch = -3;
                 midFilter.current.type = "lowpass";
-                midFilter.current.frequency.value = 3000;
-                _voxDist.current.distortion = 0.2;
+                midFilter.current.frequency.value = 2500;
+                _voxDist.current.distortion = 0.4;
                 _voxDist.current.wet.value = 0.15;
+                _voxReverb.current.wet.value = 0.4; // Big trap reverb
             } else if (vocalFx === "hyper") {
-                // Hyperpop / Glitch (100 gecs)
-                _voxPitch.current.pitch = 12; // Octave up
-                _voxCheby.current.order = 20; // Mild coloration
+                // Hyperpop: Octave up, Bitcrush, Phaser/Cheby
+                _voxPitch.current.pitch = 12;
+                _voxCheby.current.order = 50;
                 _voxCheby.current.wet.value = 0.1;
+                _voxBit.current.bits = 4;
+                _voxBit.current.wet.value = 0.3;
                 midFilter.current.type = "peaking";
-                midFilter.current.frequency.value = 1500;
-                midFilter.current.Q.value = 2;
+                midFilter.current.frequency.value = 2000;
+                midFilter.current.Q.value = 4;
             } else if (vocalFx === "lofi") {
-                // Lo-Fi / Radio / Old School
+                // Lo-Fi: Bandpass, Bitcrush, Detune
                 midFilter.current.type = "bandpass";
-                midFilter.current.frequency.value = 1200;
-                midFilter.current.Q.value = 0.8;
-                _voxPitch.current.pitch = -1; // Detune slightly
-                _voxDist.current.distortion = 0.1; // Grit
-                _voxDist.current.wet.value = 0.2;
+                midFilter.current.frequency.value = 1000;
+                midFilter.current.Q.value = 1.0;
+                _voxPitch.current.pitch = -0.5; // Drift
+                _voxBit.current.bits = 8;
+                _voxBit.current.wet.value = 1;
             } else if (vocalFx === "dua") {
-                // Formant Shift Simulation (Deeper fem/alto)
+                // Alto Pop: Slight pitch down, Formant boost (Low mids)
                 _voxPitch.current.pitch = -1.5;
                 midFilter.current.type = "peaking";
-                midFilter.current.frequency.value = 900; // Body boost
-                midFilter.current.Q.value = 1.5;
-                midFilter.current.gain.value = 4;
+                midFilter.current.frequency.value = 800;
+                midFilter.current.Q.value = 2;
+                midFilter.current.gain.value = 6;
+                _voxChorus.current.wet.value = 0.2;
             } else if (vocalFx === "weekend") {
-                // Bright, airy male falsetto vibe
-                _voxPitch.current.pitch = 2;
+                // Falsetto: Pitch up, Highpass, Reverb
+                _voxPitch.current.pitch = 4;
                 midFilter.current.type = "highpass";
-                midFilter.current.frequency.value = 400; // Cut mud
-                // Add sheen
+                midFilter.current.frequency.value = 300;
+                _voxReverb.current.wet.value = 0.3;
+            } else if (vocalFx === "robot") {
+                // Daft Punk Style: Cheby + Bitcrush + Fixed Pitch
+                _voxCheby.current.order = 100;
+                _voxCheby.current.wet.value = 1.0;
+                _voxPitch.current.pitch = -12; // Sub
+                _voxBit.current.bits = 4;
+                _voxBit.current.wet.value = 0.5;
             }
         }, [vocalFx]);
 
@@ -934,28 +960,40 @@
                 if (_voxPitch.current) _voxPitch.current.dispose();
                 if (_voxDist.current) _voxDist.current.dispose();
                 if (_voxCheby.current) _voxCheby.current.dispose();
+                if (_voxReverb.current) _voxReverb.current.dispose();
+                if (_voxChorus.current) _voxChorus.current.dispose();
+                if (_voxBit.current) _voxBit.current.dispose();
 
                 await initMaster();
                 const msSplit = new Tone.MidSideSplit(); const msMerge = new Tone.MidSideMerge(); const mGain = new Tone.Gain(); const sGain = new Tone.Gain(); const mFilter = new Tone.Filter(20000, "lowpass"); const newEq = new Tone.EQ3(0, 0, 0); const newPitchShift = new Tone.PitchShift({ pitch: 0, windowSize: 0.1, overlap: 0.05, wet: 0 });
 
-                // Vocal FX Nodes
-                const vPitch = new Tone.PitchShift({ pitch: 0, windowSize: 0.05 });
+                // Advanced Vocal FX Chain (Mid Channel)
+                // Pitch -> Filter -> Distortion -> Cheby -> BitCrush -> Chorus -> Reverb
+                const vPitch = new Tone.PitchShift({ pitch: 0, windowSize: 0.04, delayTime: 0, feedback: 0 });
                 const vDist = new Tone.Distortion(0);
                 const vCheby = new Tone.Chebyshev(50);
-                vCheby.wet.value = 0;
-                vDist.wet.value = 0;
+                const vReverb = new Tone.Reverb({ decay: 1.5, preDelay: 0.01 });
+                const vChorus = new Tone.Chorus({ frequency: 2.5, delayTime: 2.5, depth: 0.5 });
+                const vBit = new Tone.BitCrusher(16);
+
+                // Init Wets
+                vDist.wet.value = 0; vCheby.wet.value = 0; vReverb.wet.value = 0; vChorus.wet.value = 0; vBit.wet.value = 0;
+                await vReverb.generate();
 
                 midSideSplit.current = msSplit; midSideMerge.current = msMerge; midGain.current = mGain; sideGain.current = sGain; midFilter.current = mFilter; _eqNode.current = newEq; _pitchShiftNode.current = newPitchShift;
                 _voxPitch.current = vPitch; _voxDist.current = vDist; _voxCheby.current = vCheby;
+                _voxReverb.current = vReverb; _voxChorus.current = vChorus; _voxBit.current = vBit;
 
-                // Chain: Source -> MS Split
-                // Mid Chain: Mid -> Gain -> Filter -> VoxPitch -> VoxDist -> VoxCheby -> MS Merge
+                // Chain Construction
                 msSplit.mid.connect(mGain);
                 mGain.connect(mFilter);
                 mFilter.connect(vPitch);
                 vPitch.connect(vDist);
                 vDist.connect(vCheby);
-                vCheby.connect(msMerge.mid);
+                vCheby.connect(vBit);
+                vBit.connect(vChorus);
+                vChorus.connect(vReverb);
+                vReverb.connect(msMerge.mid);
 
                 // Side Chain: Side -> Gain -> MS Merge
                 msSplit.side.connect(sGain);
@@ -1086,6 +1124,7 @@
                         <option value="lofi">AI: Lo-Fi Indie</option>
                         <option value="dua">AI: Alto Star</option>
                         <option value="weekend">AI: Falsetto</option>
+                        <option value="robot">AI: Robot</option>
                     </select>
                     <button onClick={handleSetCue} disabled={!loaded} className="bg-red-500/20 hover:bg-red-500/40 text-red-400 border border-red-500/50 px-3 py-1 text-[10px] font-bold rounded-full transition">SET CUE</button>
                 </div>
