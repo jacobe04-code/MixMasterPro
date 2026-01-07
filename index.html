@@ -4,23 +4,23 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MixMaster Pro: Granular Edition</title>
-    
+
     <!-- React & ReactDOM -->
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-    
+
     <!-- Babel for JSX -->
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    
+
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
-    
+
     <!-- Tone.js for Audio Processing -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
-    
+
     <style>
         body { background-color: #0f172a; color: white; font-family: 'Inter', sans-serif; }
-        
+
         /* Custom Slider Styling */
         input[type=range] {
             -webkit-appearance: none;
@@ -51,10 +51,10 @@
         input[type=range]:focus {
             outline: none;
         }
-        
+
         .deck-active-a { box-shadow: 0 0 25px rgba(59, 130, 246, 0.15); border-color: #3b82f6; }
         .deck-active-b { box-shadow: 0 0 25px rgba(236, 72, 153, 0.15); border-color: #ec4899; }
-        
+
         .loader {
             border: 3px solid #f3f3f3;
             border-radius: 50%;
@@ -69,7 +69,7 @@
         .playhead-line {
             transition: left 0.1s linear;
         }
-        
+
         /* Transition for UI Hiding */
         .ui-container {
             transition: opacity 0.5s ease-in-out;
@@ -120,8 +120,8 @@
         writeString(view, 8, 'WAVE');
         writeString(view, 12, 'fmt ');
         view.setUint32(16, 16, true);
-        view.setUint16(20, 1, true); 
-        view.setUint16(22, 1, true); 
+        view.setUint16(20, 1, true);
+        view.setUint16(22, 1, true);
         view.setUint32(24, sampleRate, true);
         view.setUint32(28, sampleRate * 2, true);
         view.setUint16(32, 2, true);
@@ -170,7 +170,7 @@
             const data = await response.json();
             const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
             if (!text) return [];
-            
+
             const jsonStr = text.replace(/```json|```/g, '').trim();
             const results = JSON.parse(jsonStr);
             return results.map(r => ({ ...r, videoId: r.videoId.trim() }));
@@ -182,7 +182,7 @@
 
     // --- Constants ---
     const KEYS = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
-    
+
     // --- Icons ---
     const Icon = ({ name, size = 20, className }) => {
         const icons = {
@@ -215,7 +215,9 @@
         if (!window.masterLimiter) {
             window.masterLimiter = new Tone.Limiter(-1).toDestination();
             window.masterAnalyser = new Tone.Analyser("fft", 256);
+            window.masterRecorder = new Tone.Recorder();
             window.masterLimiter.connect(window.masterAnalyser);
+            window.masterLimiter.connect(window.masterRecorder);
         }
     };
 
@@ -229,12 +231,12 @@
 
     // --- Common Components ---
     const StemToggle = ({ label, active, onClick, disabled, color }) => (
-        <button 
+        <button
             onClick={onClick}
             disabled={disabled}
-            className={`px-3 py-1 text-[10px] font-bold uppercase rounded-full transition-all border 
-                ${active 
-                    ? (color === 'blue' ? 'bg-blue-500 border-blue-500 text-white' : 'bg-pink-500 border-pink-500 text-white') 
+            className={`px-3 py-1 text-[10px] font-bold uppercase rounded-full transition-all border
+                ${active
+                    ? (color === 'blue' ? 'bg-blue-500 border-blue-500 text-white' : 'bg-pink-500 border-pink-500 text-white')
                     : 'bg-slate-800/50 border-slate-700 text-slate-400 hover:border-slate-500 disabled:opacity-30 disabled:cursor-not-allowed'}`}
         >
             {label}
@@ -250,16 +252,16 @@
             let rafId;
             const canvas = canvasRef.current;
             const ctx = canvas.getContext('2d');
-            let smoothedVol = 0; 
+            let smoothedVol = 0;
 
             class Particle {
                 constructor(x, y, color, type) {
-                    this.x = x; 
-                    this.y = y; 
-                    this.color = color; 
+                    this.x = x;
+                    this.y = y;
+                    this.color = color;
                     this.type = type;
                     this.life = 1.0;
-                    
+
                     if (type === 'firework') {
                         const angle = Math.random() * Math.PI * 2;
                         const speed = Math.random() * 6 + 2;
@@ -268,10 +270,10 @@
                         this.decay = Math.random() * 0.01 + 0.015;
                         this.size = Math.random() * 3 + 1;
                     } else if (type === 'fire') {
-                        this.vx = (Math.random() - 0.5) * 2; 
-                        this.vy = -(Math.random() * 4 + 3); 
+                        this.vx = (Math.random() - 0.5) * 2;
+                        this.vy = -(Math.random() * 4 + 3);
                         this.decay = Math.random() * 0.03 + 0.01;
-                        this.size = Math.random() * 30 + 15; 
+                        this.size = Math.random() * 30 + 15;
                         this.wobble = Math.random() * Math.PI * 2;
                     }
                 }
@@ -283,14 +285,14 @@
                         this.y += this.vy;
                         this.wobble += 0.1;
                         this.life -= this.decay;
-                        this.size *= 0.96; 
+                        this.size *= 0.96;
                     }
                 }
                 draw(ctx) {
                     if (this.life <= 0) return;
                     ctx.save();
                     ctx.globalAlpha = this.life;
-                    
+
                     if (this.type === 'fire') {
                         ctx.globalCompositeOperation = 'screen';
                         let r, g, b;
@@ -328,21 +330,21 @@
                 const time = Date.now() * 0.001;
 
                 if (mode === 'fire') {
-                    ctx.fillStyle = 'rgba(15, 23, 42, 0.2)'; 
+                    ctx.fillStyle = 'rgba(15, 23, 42, 0.2)';
                     ctx.fillRect(0, 0, w, h);
                 } else {
                     ctx.clearRect(0, 0, w, h);
                 }
 
                 if (window.masterAnalyser) {
-                    const values = window.masterAnalyser.getValue(); 
+                    const values = window.masterAnalyser.getValue();
                     let sum = 0;
                     for(let i = 0; i < values.length; i++) sum += values[i] ** 2;
                     const rms = Math.sqrt(sum / values.length);
                     smoothedVol += (rms - smoothedVol) * 0.1;
-                    
+
                     const bassSum = values.slice(0, 10).reduce((a,b) => a + (b+100), 0) / 10;
-                    const isBeat = bassSum > 85; 
+                    const isBeat = bassSum > 85;
 
                     if (mode === 'bars') {
                         const barSpacing = 10;
@@ -350,11 +352,11 @@
                         const perimeter = (w + h) * 2;
                         const totalSteps = Math.floor(perimeter / (barWidth + barSpacing));
                         let currentDist = 0;
-                        
+
                         for (let i = 0; i < totalSteps; i++) {
                             const freqIdx = Math.floor(Math.abs(Math.sin(i * 0.1)) * (values.length - 1));
                             const val = Math.max(0, (values[freqIdx] + 100) / 100);
-                            const height = val * 100; 
+                            const height = val * 100;
                             const gradientPos = i / totalSteps;
                             const r = 59 + (236 - 59) * gradientPos;
                             const g = 130 + (72 - 130) * gradientPos;
@@ -366,7 +368,7 @@
                             else if (currentDist < perimeter) ctx.fillRect(0, h - (currentDist - (w + h + w)) - barWidth, height, barWidth);
                             currentDist += barWidth + barSpacing;
                         }
-                    } 
+                    }
                     else if (mode === 'waves') {
                         const baseThickness = 20;
                         const waveMag = 80;
@@ -374,7 +376,7 @@
                         const intensity = Math.min(1, smoothedVol * 4);
                         const alpha = 0.2 + (intensity * 0.4);
                         const gradient = ctx.createLinearGradient(0, 0, w, h);
-                        gradient.addColorStop(0, `rgba(59, 130, 246, ${alpha})`); 
+                        gradient.addColorStop(0, `rgba(59, 130, 246, ${alpha})`);
                         gradient.addColorStop(1, `rgba(236, 72, 153, ${alpha})`);
                         ctx.fillStyle = gradient;
                         ctx.beginPath();
@@ -421,13 +423,13 @@
                         }
                     }
                     else if (mode === 'pixels') {
-                        const pixelSize = 40; 
+                        const pixelSize = 40;
                         for(let x = 0; x < w; x+=pixelSize) {
                             for(let y = 0; y < h; y+=pixelSize) {
                                 const idx = Math.floor( (x/w) * values.length * 0.5 + (y/h) * values.length * 0.5 ) % values.length;
                                 const val = (values[idx] + 100) / 100;
                                 if(val > 0.6) {
-                                    const alpha = (val - 0.6) * 0.5; 
+                                    const alpha = (val - 0.6) * 0.5;
                                     ctx.fillStyle = `rgba(255, 255, 255, ${alpha})`;
                                     ctx.fillRect(x, y, pixelSize-2, pixelSize-2);
                                 }
@@ -444,8 +446,8 @@
                         }
                     }
                     else if (mode === 'fire') {
-                        const vol = Math.max(0, (values[5] + 100)/100); 
-                        const particlesToSpawn = Math.floor(vol * 4); 
+                        const vol = Math.max(0, (values[5] + 100)/100);
+                        const particlesToSpawn = Math.floor(vol * 4);
                         for(let i=0; i < particlesToSpawn; i++) {
                             particlesRef.current.push(new Particle(Math.random() * w, h + 20, null, 'fire'));
                         }
@@ -550,7 +552,7 @@
                 const prompt = `You are a high-energy radio DJ introducing a mashup. The tracks are '${trackA.name}' by ${trackA.artistName} and '${trackB.name}' by ${trackB.artistName}'. Write a 1-sentence hype intro. Do not use quotes.`;
                 const script = await generateText(prompt);
                 if (!script || script.includes("Error")) throw new Error("Text gen failed");
-                
+
                 // Style Prompting "from the start" instead of post-processing
                 let stylePrefix = "Say excitedly:";
                 if (selectedVoice === "Fenrir") {
@@ -563,12 +565,12 @@
 
                 const ttsPrompt = `${stylePrefix} ${script}`;
                 const audioUrl = await generateSpeech(ttsPrompt, selectedVoice);
-                
+
                 if (audioUrl) {
                     if (djPlayerRef.current) djPlayerRef.current.dispose();
-                    
+
                     const player = new Tone.Player({
-                        url: audioUrl, 
+                        url: audioUrl,
                         autostart: true,
                         onload: () => { setDjPlaying(true); setDjLoading(false); },
                         onstop: () => setDjPlaying(false),
@@ -651,16 +653,17 @@
         const [loadingAudio, setLoadingAudio] = useState(false);
         const [duration, setDuration] = useState(0);
         const [originalBpm, setOriginalBpm] = useState(120);
-        const [originalKey, setOriginalKey] = useState("C"); 
-        
+        const [originalKey, setOriginalKey] = useState("C");
+
         const [playbackRate, setPlaybackRate] = useState(1);
         const [pitchShift, setPitchShift] = useState(0);
         const [currentTime, setCurrentTime] = useState(0);
         const [stemMode, setStemMode] = useState('original');
         const [findingMatch, setFindingMatch] = useState(false);
         const [analyzing, setAnalyzing] = useState(false);
-        
-        const [cueTime, setCueTime] = useState(0); 
+        const [activeLoop, setActiveLoop] = useState(null);
+
+        const [cueTime, setCueTime] = useState(0);
         const [pausedTime, setPausedTime] = useState(0);
 
         const midSideSplit = useRef(null);
@@ -689,8 +692,8 @@
         useEffect(() => {
             if (midGain.current && sideGain.current && midFilter.current) {
                 const rampTime = 0.1;
-                if (stemMode === 'original') { midGain.current.gain.rampTo(1, rampTime); sideGain.current.gain.rampTo(1, rampTime); midFilter.current.type = "lowpass"; midFilter.current.frequency.rampTo(20000, rampTime); } 
-                else if (stemMode === 'vocal') { midGain.current.gain.rampTo(1, rampTime); sideGain.current.gain.rampTo(0, rampTime); midFilter.current.type = "highpass"; midFilter.current.frequency.rampTo(350, rampTime); } 
+                if (stemMode === 'original') { midGain.current.gain.rampTo(1, rampTime); sideGain.current.gain.rampTo(1, rampTime); midFilter.current.type = "lowpass"; midFilter.current.frequency.rampTo(20000, rampTime); }
+                else if (stemMode === 'vocal') { midGain.current.gain.rampTo(1, rampTime); sideGain.current.gain.rampTo(0, rampTime); midFilter.current.type = "highpass"; midFilter.current.frequency.rampTo(350, rampTime); }
                 else if (stemMode === 'instrumental') { midGain.current.gain.rampTo(1, rampTime); sideGain.current.gain.rampTo(1, rampTime); midFilter.current.type = "lowpass"; midFilter.current.frequency.rampTo(250, rampTime); }
             }
         }, [stemMode]);
@@ -703,7 +706,7 @@
                 const prompt = `Identify the BPM and Key for the song "${title}" by "${artist}". Return ONLY a JSON object with keys "bpm" (number) and "key" (string, must be one of: C, C#, D, D#, E, F, F#, G, G#, A, A#, B). Convert flats to sharps (e.g. Bb becomes A#). Do not include markdown.`;
                 const text = await generateText(prompt);
                 const json = JSON.parse(text.replace(/```json|```/g, '').trim());
-                
+
                 if (json.bpm) setOriginalBpm(json.bpm);
                 if (json.key && KEYS.includes(json.key)) setOriginalKey(json.key);
             } catch (e) {
@@ -733,24 +736,24 @@
                 const msSplit = new Tone.MidSideSplit(); const msMerge = new Tone.MidSideMerge(); const mGain = new Tone.Gain(); const sGain = new Tone.Gain(); const mFilter = new Tone.Filter(20000, "lowpass"); const newEq = new Tone.EQ3(0, 0, 0); const newPitchShift = new Tone.PitchShift({ pitch: 0, windowSize: 0.1, overlap: 0.05, wet: 0 });
                 midSideSplit.current = msSplit; midSideMerge.current = msMerge; midGain.current = mGain; sideGain.current = sGain; midFilter.current = mFilter; _eqNode.current = newEq; _pitchShiftNode.current = newPitchShift;
                 msSplit.mid.connect(mGain); mGain.connect(mFilter); mFilter.connect(msMerge.mid); msSplit.side.connect(sGain); sGain.connect(msMerge.side); msMerge.connect(newEq); newEq.connect(newPitchShift); newPitchShift.connect(window.masterLimiter);
-                
-                const newPlayer = new Tone.GrainPlayer({ 
-                    url: trackData.previewUrl || trackData.url, 
-                    loop: true, 
-                    grainSize: 0.2, overlap: 0.1, 
-                    autostart: false, volume: -10, 
+
+                const newPlayer = new Tone.GrainPlayer({
+                    url: trackData.previewUrl || trackData.url,
+                    loop: true,
+                    grainSize: 0.2, overlap: 0.1,
+                    autostart: false, volume: -10,
                     onload: () => {
                         setLoaded(true); setLoadingAudio(false); setDuration(newPlayer.buffer.duration); drawWaveform(newPlayer.buffer, 0);
                         if (trackData.trackName && trackData.artistName && trackData.artistName !== "Local Upload") {
                             analyzeMetadata(trackData.trackName, trackData.artistName);
                         } else {
-                            setTimeout(() => { 
-                                setOriginalBpm(Math.floor(Math.random() * (132 - 118) + 118)); 
-                                setOriginalKey(KEYS[Math.floor(Math.random() * KEYS.length)]); 
+                            setTimeout(() => {
+                                setOriginalBpm(Math.floor(Math.random() * (132 - 118) + 118));
+                                setOriginalKey(KEYS[Math.floor(Math.random() * KEYS.length)]);
                             }, 500);
                         }
                     },
-                    onerror: () => { setLoadingAudio(false); alert("Could not load audio."); } 
+                    onerror: () => { setLoadingAudio(false); alert("Could not load audio."); }
                 }).connect(msSplit);
 
                 setPlayer(newPlayer);
@@ -761,7 +764,7 @@
 
         useEffect(() => {
             if (!player || !loaded) return;
-            if (isMasterSyncEnabled) { const rate = masterBpm / originalBpm; let keyDiff = KEYS.indexOf(masterKey) - KEYS.indexOf(originalKey); if (keyDiff > 6) keyDiff -= 12; if (keyDiff < -6) keyDiff += 12; player.playbackRate = rate; player.detune = keyDiff * 100; setPlaybackRate(rate); setPitchShift(keyDiff); } 
+            if (isMasterSyncEnabled) { const rate = masterBpm / originalBpm; let keyDiff = KEYS.indexOf(masterKey) - KEYS.indexOf(originalKey); if (keyDiff > 6) keyDiff -= 12; if (keyDiff < -6) keyDiff += 12; player.playbackRate = rate; player.detune = keyDiff * 100; setPlaybackRate(rate); setPitchShift(keyDiff); }
             else { player.playbackRate = playbackRate; player.detune = pitchShift * 100; }
         }, [masterBpm, masterKey, originalBpm, originalKey, isMasterSyncEnabled, player, loaded, playbackRate, pitchShift]);
 
@@ -772,6 +775,28 @@
         const handleComplimentClick = async () => { if (!trackData) return; setFindingMatch(true); await onCompliment(id, trackData.trackName, trackData.artistName); setFindingMatch(false); };
         const handleManualTempo = (e) => { if(!isMasterSyncEnabled) setPlaybackRate(parseFloat(e.target.value)); };
         const handleManualPitch = (e) => { if(!isMasterSyncEnabled) setPitchShift(parseFloat(e.target.value)); };
+
+        const handleLoop = (beats) => {
+            if (!player || !loaded) return;
+            if (beats === null) {
+                player.loopStart = 0;
+                player.loopEnd = player.buffer.duration;
+                setActiveLoop(null);
+            } else {
+                const now = Tone.now();
+                const elapsed = (now - startTimeRef.current) * player.playbackRate;
+                const curr = elapsed % duration;
+
+                const beatDur = 60 / originalBpm;
+                const loopDur = beatDur * beats;
+
+                player.loopStart = curr;
+                let end = curr + loopDur;
+                if (end > player.buffer.duration) end = player.buffer.duration;
+                player.loopEnd = end;
+                setActiveLoop(beats);
+            }
+        };
 
         useEffect(() => {
             const loop = () => { if(player && isPlaying && duration > 0) { const now = Tone.now(); const elapsed = (now - startTimeRef.current) * player.playbackRate; const curr = elapsed % duration; setCurrentTime(curr); if(playheadRef.current) { const pct = (curr / duration) * 100; playheadRef.current.style.left = `${pct}%`; } } rafRef.current = requestAnimationFrame(loop); };
@@ -826,6 +851,20 @@
                         <button onClick={handlePause} disabled={!loaded || !isPlaying} className="py-3 bg-slate-800/50 text-white border border-slate-700 hover:bg-slate-700/50 rounded-lg font-bold flex items-center justify-center gap-2"><Icon name="pause" size={16} /> PAUSE</button>
                         <button onClick={handleStop} disabled={!loaded} className="py-3 bg-slate-800/50 text-red-400 border border-slate-700 hover:bg-red-900/20 rounded-lg font-bold flex items-center justify-center gap-2"><Icon name="stop" size={16} /> STOP</button>
                     </div>
+
+                    <div className="bg-slate-950/50 p-2 rounded-lg border border-slate-800/50">
+                        <div className="text-[10px] font-bold uppercase text-slate-400 mb-1 flex justify-between">
+                            <span>Loop</span>
+                            {activeLoop && <span className="text-yellow-400 animate-pulse">ACTIVE: {activeLoop} Beats</span>}
+                        </div>
+                        <div className="flex gap-1">
+                            {[1, 2, 4, 8].map(b => (
+                                <button key={b} onClick={() => handleLoop(b)} disabled={!loaded} className={`flex-1 py-1 text-[10px] font-bold rounded border transition-all ${activeLoop === b ? 'bg-yellow-500 text-black border-yellow-500' : 'bg-slate-800 text-slate-400 border-slate-700 hover:border-slate-500'}`}>{b}</button>
+                            ))}
+                            <button onClick={() => handleLoop(null)} disabled={!loaded || !activeLoop} className={`flex-1 py-1 text-[10px] font-bold rounded border transition-all ${!activeLoop ? 'opacity-50 cursor-not-allowed bg-slate-900 border-slate-800' : 'bg-red-500/20 text-red-400 border-red-500 hover:bg-red-500 hover:text-white'}`}>EXIT</button>
+                        </div>
+                    </div>
+
                     <div className="grid grid-cols-2 gap-4 bg-slate-950/50 p-3 rounded-lg border border-slate-800/50">
                         <div className="flex flex-col gap-1">
                             <div className="flex justify-between text-[10px] font-bold uppercase text-slate-400"><span>Tempo</span><span className={isMasterSyncEnabled ? "text-green-400" : "text-blue-400"}>{playbackRate.toFixed(2)}x</span></div>
@@ -857,12 +896,12 @@
         return (
             <div className="w-full max-w-4xl mt-8 bg-slate-900/30 backdrop-blur-md rounded-2xl border-2 border-purple-500/50 p-6 relative overflow-hidden shadow-2xl relative z-10">
                 <div className="absolute top-0 left-1/2 -translate-x-1/2 w-2/3 h-1 bg-gradient-to-r from-transparent via-purple-500 to-transparent shadow-[0_0_20px_rgba(168,85,247,0.5)]"></div>
-                
+
                 <div className="flex flex-col md:flex-row justify-between items-center mb-6 gap-4">
                     <div className="flex items-center gap-4">
                         <h2 className="text-2xl font-black italic tracking-tighter flex items-center gap-2 text-white"><Icon name="layers" className="text-purple-400" /> MASHUP ENGINE</h2>
                     </div>
-                    
+
                     <div className="flex items-center gap-4 bg-slate-950/50 p-2 rounded-xl border border-slate-800/50">
                         <div className="flex flex-col items-center border-r border-slate-700 pr-4">
                             <label className="text-[9px] text-slate-500 font-bold uppercase">Master BPM</label>
@@ -911,6 +950,7 @@
         const deckBRef = useRef();
         const [vizMode, setVizMode] = useState('bars');
         const [uiVisible, setUiVisible] = useState(true);
+        const [isRecording, setIsRecording] = useState(false);
 
         const [deckABpm, setDeckABpm] = useState(null);
         const [deckBBpm, setDeckBBpm] = useState(null);
@@ -930,6 +970,22 @@
         const handleBpmReport = (deckId, bpm) => {
             if (deckId === 'A') setDeckABpm(bpm);
             else setDeckBBpm(bpm);
+        };
+
+        const handleToggleRecording = async () => {
+            if (!window.masterRecorder) await initMaster();
+            if (window.masterRecorder.state === 'started') {
+                const recording = await window.masterRecorder.stop();
+                const url = URL.createObjectURL(recording);
+                const anchor = document.createElement("a");
+                anchor.download = `MixMaster_Recording_${new Date().toISOString().slice(0,19).replace(/:/g,"-")}.webm`;
+                anchor.href = url;
+                anchor.click();
+                setIsRecording(false);
+            } else {
+                window.masterRecorder.start();
+                setIsRecording(true);
+            }
         };
 
         const handleLoadTrack = (deck, track) => {
@@ -966,6 +1022,10 @@
                     <header className="flex flex-col md:flex-row items-center justify-between mb-8 gap-6 w-full max-w-4xl bg-slate-900/30 backdrop-blur-md p-4 rounded-xl border border-slate-700/50">
                         <h1 className="text-3xl font-black tracking-tighter bg-gradient-to-r from-blue-400 to-pink-500 bg-clip-text text-transparent">MIXMASTER <span className="text-sm font-normal text-slate-500 ml-2">PRO AI</span></h1>
                         <div className="flex items-center gap-2">
+                            <button onClick={handleToggleRecording} className={`flex items-center gap-2 px-3 py-1 rounded font-bold text-xs transition border ${isRecording ? 'bg-red-500/20 text-red-500 border-red-500 animate-pulse' : 'bg-slate-950/50 border-slate-700 text-slate-400 hover:text-white hover:border-white'}`}>
+                                <div className={`w-2 h-2 rounded-full ${isRecording ? 'bg-red-500' : 'bg-slate-500'}`}></div> {isRecording ? "REC ON" : "REC MIX"}
+                            </button>
+                            <div className="h-6 w-px bg-slate-700 mx-2"></div>
                             <button onClick={() => setUiVisible(!uiVisible)} className="bg-slate-950/50 border border-slate-700 rounded px-2 py-1 text-white hover:border-blue-500 hover:text-blue-400 transition" title="Toggle Fullscreen Visualizer"><Icon name={uiVisible ? "eye" : "eyeOff"} size={16} /></button>
                             <span className="text-xs font-bold text-slate-400 uppercase">Visuals:</span>
                             <select value={vizMode} onChange={(e) => setVizMode(e.target.value)} className="bg-slate-950/50 border border-slate-700 rounded px-2 py-1 text-xs text-white focus:outline-none cursor-pointer hover:border-blue-500">
@@ -986,7 +1046,7 @@
                     <MashupControls deckARef={deckARef} deckBRef={deckBRef} isAutoSync={isAutoSync} setIsAutoSync={setIsAutoSync} masterBpm={masterBpm} setMasterBpm={setMasterBpm} masterKey={masterKey} setMasterKey={setMasterKey} />
                     <ReferencePlayer />
                 </div>
-                
+
                 {!uiVisible && (
                     <button onClick={() => setUiVisible(true)} className="fixed top-4 right-4 z-50 bg-black/50 hover:bg-black/80 text-white p-3 rounded-full backdrop-blur-md transition-all border border-white/20"><Icon name="eye" size={24} /></button>
                 )}
