@@ -1363,8 +1363,15 @@
 
         const handleAutoCompliment = async (sourceDeck, trackName, artistName) => {
             const targetDeck = sourceDeck === 'A' ? 'B' : 'A';
-            // 1. Ask LLM for a match
-            const prompt = `Suggest a famous mainstream song that is harmonically compatible with "${trackName}" by "${artistName}" for a DJ mashup. Return ONLY the song title and artist name in the format "Title - Artist". Do not add any extra text.`;
+
+            // 1. Ask LLM for a NEW, Random, Harmonically Compatible Match
+            // We use a random seed in the prompt to prevent caching and ensure variety
+            const randomSeed = Math.floor(Math.random() * 10000);
+            const prompt = `Suggest a famous mainstream song that is Camelot Key compatible (harmonically mixable) with "${trackName}" by "${artistName}".
+            It must be a DIFFERENT song than the input.
+            Pick a random compatible song from a different artist if possible.
+            Random Seed: ${randomSeed}.
+            Return ONLY the song title and artist name in the format "Title - Artist". Do not add any extra text.`;
 
             let query = artistName; // Fallback
 
