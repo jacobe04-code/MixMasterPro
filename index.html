@@ -121,14 +121,37 @@
         return [`${wordA} vs ${wordB}`, `${trackA.trackName} (${trackB.artistName} Mix)`, `The ${wordA} Mashup`];
     };
 
-    const speakText = (text, voiceURI) => {
+    const speakText = async (text, voiceKey) => {
+        // Try Public TTS API first
+        if (voiceKey && voiceKey.startsWith("api_")) {
+            const apiVoice = voiceKey.replace("api_", "");
+            try {
+                // Use a known working proxy or direct endpoint if CORS allows.
+                // We use a robust public wrapper for TikTok TTS voices.
+                const resp = await fetch("https://ottsy.weilbyte.dev/api/generation", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ text: text, voice: apiVoice })
+                });
+                const json = await resp.json();
+                if (json.data) {
+                    const audio = new Audio(`data:audio/mp3;base64,${json.data}`);
+                    audio.play();
+                    return true;
+                }
+            } catch (e) {
+                console.error("TTS API Failed, falling back to native", e);
+            }
+        }
+
+        // Fallback to Native Browser TTS
         if ('speechSynthesis' in window) {
             const utterance = new SpeechSynthesisUtterance(text);
             const voices = window.speechSynthesis.getVoices();
-            const selected = voices.find(v => v.voiceURI === voiceURI) || voices.find(v => v.name.includes("Google US English")) || voices[0];
+            const selected = voices.find(v => v.voiceURI === voiceKey) || voices.find(v => v.name.includes("Google US English")) || voices[0];
             if (selected) utterance.voice = selected;
-            utterance.rate = 1.2;
-            utterance.pitch = 1.1;
+            utterance.rate = 1.1;
+            utterance.pitch = 1.0;
             window.speechSynthesis.speak(utterance);
             return true;
         }
@@ -628,13 +651,21 @@
         const [djLoading, setDjLoading] = useState(false);
         const [djPlaying, setDjPlaying] = useState(false);
         const [availableVoices, setAvailableVoices] = useState([]);
-        const [selectedVoice, setSelectedVoice] = useState("");
+        const [selectedVoice, setSelectedVoice] = useState("api_en_us_001");
 
         useEffect(() => {
             const loadVoices = () => {
-                const voices = window.speechSynthesis.getVoices();
-                setAvailableVoices(voices);
-                if (voices.length > 0 && !selectedVoice) setSelectedVoice(voices[0].voiceURI);
+                const nativeVoices = window.speechSynthesis.getVoices().map(v => ({ name: `(Native) ${v.name.slice(0,10)}...`, id: v.voiceURI }));
+                const aiVoices = [
+                    { name: "AI: Classic Female", id: "api_en_us_001" },
+                    { name: "AI: Classic Male", id: "api_en_us_006" },
+                    { name: "AI: Cool Guy", id: "api_en_us_002" },
+                    { name: "AI: Ghostface", id: "api_en_us_ghostface" },
+                    { name: "AI: Chewbacca", id: "api_en_us_chewbacca" },
+                    { name: "AI: Singing Soprano", id: "api_en_female_f08_salut_damour" },
+                    { name: "AI: Singing Tenor", id: "api_en_male_m03_lobby" }
+                ];
+                setAvailableVoices([...aiVoices, ...nativeVoices]);
             };
             loadVoices();
             window.speechSynthesis.onvoiceschanged = loadVoices;
@@ -666,15 +697,15 @@
                 if (generated) intro = generated.replace(/"/g, '');
             } catch(e) { console.error(e); }
 
-            setTimeout(() => {
-                const spoke = speakText(intro, selectedVoice);
+            setTimeout(async () => {
+                const spoke = await speakText(intro, selectedVoice);
                 setDjLoading(false);
                 if (spoke) {
                     setDjPlaying(true);
                     // Estimate speech duration roughly
-                    setTimeout(() => setDjPlaying(false), intro.length * 80 + 2000);
+                    setTimeout(() => setDjPlaying(false), intro.length * 100 + 3000);
                 } else {
-                    alert("TTS not available on this browser.");
+                    alert("TTS not available.");
                 }
             }, 500);
         };
@@ -689,8 +720,8 @@
                     <div>
                         <div className="flex justify-between items-center mb-2">
                             <h3 className="text-blue-300 font-bold flex items-center gap-2 text-sm uppercase tracking-wider"><Icon name="mic" size={14} /> AI DJ Host</h3>
-                            <select value={selectedVoice} onChange={(e) => setSelectedVoice(e.target.value)} className="bg-slate-900 border border-slate-700 text-[10px] rounded px-1 max-w-[100px] text-white">
-                                {availableVoices.map(v => <option key={v.voiceURI} value={v.voiceURI}>{v.name.slice(0, 15)}...</option>)}
+                            <select value={selectedVoice} onChange={(e) => setSelectedVoice(e.target.value)} className="bg-slate-900 border border-slate-700 text-[10px] rounded px-1 max-w-[120px] text-white">
+                                {availableVoices.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
                             </select>
                         </div>
                         <p className="text-xs text-gray-500">{djLoading ? "Generating script..." : (djPlaying ? "Broadcasting live..." : "Generate a custom hype intro.")}</p>
@@ -802,35 +833,60 @@
             getDuration: () => duration
         }));
 
-        // Vocal FX Logic
+        // Vocal FX Logic (Mock AI Formant Shifting)
         useEffect(() => {
             if (!_voxPitch.current || !_voxDist.current || !_voxCheby.current) return;
-            // Defaults
+            // Reset Defaults
             _voxPitch.current.pitch = 0;
             _voxDist.current.wet.value = 0;
+            _voxDist.current.distortion = 0;
             _voxCheby.current.wet.value = 0;
             midFilter.current.type = "lowpass";
             midFilter.current.frequency.value = 20000;
+            midFilter.current.Q.value = 1;
 
             if (vocalFx === "pop") {
-                _voxPitch.current.pitch = 2; // Brighter
-            } else if (vocalFx === "deep") {
-                _voxPitch.current.pitch = -4; // Deep voice
-            } else if (vocalFx === "chipmunk") {
-                _voxPitch.current.pitch = 12; // High pitch
-            } else if (vocalFx === "demon") {
-                _voxPitch.current.pitch = -6;
-                _voxDist.current.distortion = 0.4;
-                _voxDist.current.wet.value = 0.3;
-            } else if (vocalFx === "robot") {
-                _voxCheby.current.order = 50;
-                _voxCheby.current.wet.value = 1;
-            } else if (vocalFx === "telephone") {
-                midFilter.current.type = "bandpass";
-                midFilter.current.frequency.value = 1000;
-                midFilter.current.Q.value = 2;
+                // Brighter, tighter, slight high pitch (Fem/Pop)
+                _voxPitch.current.pitch = 3;
+                midFilter.current.type = "highshelf";
+                midFilter.current.frequency.value = 3000;
+                midFilter.current.gain.value = 6;
+            } else if (vocalFx === "trap") {
+                // Deep, dark, slightly distorted (Travis Scott style)
+                _voxPitch.current.pitch = -3;
+                midFilter.current.type = "lowpass";
+                midFilter.current.frequency.value = 3000;
                 _voxDist.current.distortion = 0.2;
+                _voxDist.current.wet.value = 0.15;
+            } else if (vocalFx === "hyper") {
+                // Hyperpop / Glitch (100 gecs)
+                _voxPitch.current.pitch = 12; // Octave up
+                _voxCheby.current.order = 20; // Mild coloration
+                _voxCheby.current.wet.value = 0.1;
+                midFilter.current.type = "peaking";
+                midFilter.current.frequency.value = 1500;
+                midFilter.current.Q.value = 2;
+            } else if (vocalFx === "lofi") {
+                // Lo-Fi / Radio / Old School
+                midFilter.current.type = "bandpass";
+                midFilter.current.frequency.value = 1200;
+                midFilter.current.Q.value = 0.8;
+                _voxPitch.current.pitch = -1; // Detune slightly
+                _voxDist.current.distortion = 0.1; // Grit
                 _voxDist.current.wet.value = 0.2;
+            } else if (vocalFx === "dua") {
+                // Formant Shift Simulation (Deeper fem/alto)
+                _voxPitch.current.pitch = -1.5;
+                midFilter.current.type = "peaking";
+                midFilter.current.frequency.value = 900; // Body boost
+                midFilter.current.Q.value = 1.5;
+                midFilter.current.gain.value = 4;
+            } else if (vocalFx === "weekend") {
+                // Bright, airy male falsetto vibe
+                _voxPitch.current.pitch = 2;
+                midFilter.current.type = "highpass";
+                midFilter.current.frequency.value = 400; // Cut mud
+                // Add sheen
             }
         }, [vocalFx]);
 
@@ -1022,14 +1078,14 @@
                         <StemToggle label="Vox" active={stemMode === 'vocal'} onClick={() => setStemMode('vocal')} disabled={!loaded} color={id === 'A' ? 'blue' : 'pink'} />
                         <StemToggle label="Inst" active={stemMode === 'instrumental'} onClick={() => setStemMode('instrumental')} disabled={!loaded} color={id === 'A' ? 'blue' : 'pink'} />
                     </div>
-                    <select value={vocalFx} onChange={e => setVocalFx(e.target.value)} disabled={!loaded} className="bg-slate-900 border border-slate-700 text-[10px] rounded px-2 text-white font-bold w-24">
-                        <option value="off">FX: Off</option>
-                        <option value="pop">Pop Star</option>
-                        <option value="deep">Deep Rap</option>
-                        <option value="chipmunk">Chipmunk</option>
-                        <option value="demon">Demon</option>
-                        <option value="robot">Robot</option>
-                        <option value="telephone">Phone</option>
+                    <select value={vocalFx} onChange={e => setVocalFx(e.target.value)} disabled={!loaded} className="bg-slate-900 border border-slate-700 text-[10px] rounded px-2 text-white font-bold w-28">
+                        <option value="off">Vocals: Raw</option>
+                        <option value="pop">AI: Pop Diva</option>
+                        <option value="trap">AI: Trap God</option>
+                        <option value="hyper">AI: Hyperpop</option>
+                        <option value="lofi">AI: Lo-Fi Indie</option>
+                        <option value="dua">AI: Alto Star</option>
+                        <option value="weekend">AI: Falsetto</option>
                     </select>
                     <button onClick={handleSetCue} disabled={!loaded} className="bg-red-500/20 hover:bg-red-500/40 text-red-400 border border-red-500/50 px-3 py-1 text-[10px] font-bold rounded-full transition">SET CUE</button>
                 </div>
