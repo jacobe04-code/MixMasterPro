@@ -92,8 +92,28 @@
         return Math.floor(min + (normalized / 100) * (max - min));
     };
 
-    // --- Mock Helpers ---
-    const generateSmartName = (trackA, trackB) => {
+    // --- API Helpers ---
+
+    // Uses text.pollinations.ai for free LLM access
+    const askLLM = async (prompt) => {
+        try {
+            const encodedPrompt = encodeURIComponent(prompt);
+            const response = await fetch(`https://text.pollinations.ai/${encodedPrompt}`);
+            const text = await response.text();
+            return text;
+        } catch (e) {
+            console.error("LLM Error:", e);
+            return null;
+        }
+    };
+
+    const generateSmartName = async (trackA, trackB) => {
+        const prompt = `Generate 3 creative mashup names for "${trackA.trackName}" by ${trackA.artistName} mixed with "${trackB.trackName}" by ${trackB.artistName}". Return only the names separated by commas.`;
+        const result = await askLLM(prompt);
+        if (result) {
+            return result.split(',').map(s => s.trim()).filter(s => s.length > 0).slice(0, 3);
+        }
+        // Fallback
         const wordsA = trackA.trackName.split(' ');
         const wordsB = trackB.trackName.split(' ');
         const wordA = wordsA[Math.floor(Math.random() * wordsA.length)];
@@ -104,7 +124,6 @@
     const speakText = (text) => {
         if ('speechSynthesis' in window) {
             const utterance = new SpeechSynthesisUtterance(text);
-            // Try to find a good voice
             const voices = window.speechSynthesis.getVoices();
             const preferred = voices.find(v => v.name.includes("Google US English")) || voices[0];
             if (preferred) utterance.voice = preferred;
@@ -116,9 +135,80 @@
         return false;
     };
 
+    let cachedInstance = null;
+    const findWorkingInstance = async () => {
+        if (cachedInstance) return cachedInstance;
+
+        // Priority list
+        const candidates = [
+            "https://inv.perditum.com",
+            "https://invidious.projectsegfau.lt",
+            "https://inv.bp.projectsegfau.lt",
+            "https://invidious.drgns.space",
+            "https://vid.puffyan.us"
+        ];
+
+        // Try candidates first
+        for (const url of candidates) {
+            try {
+                const controller = new AbortController();
+                const id = setTimeout(() => controller.abort(), 3000);
+                const res = await fetch(`${url}/api/v1/search?q=test`, { signal: controller.signal });
+                clearTimeout(id);
+                if (res.ok) {
+                    // Verify it returns JSON and not a captcha page
+                    const type = res.headers.get("content-type");
+                    if (type && type.includes("json")) {
+                        cachedInstance = url;
+                        return url;
+                    }
+                }
+            } catch (e) { console.log(`Instance failed: ${url}`); }
+        }
+
+        // Fallback: Fetch list
+        try {
+            const listRes = await fetch("https://api.invidious.io/instances.json?sort_by=health");
+            const list = await listRes.json();
+            const httpsInstances = list.filter(i => i[1].type === "https" && i[1].api === true).map(i => i[1].uri);
+
+            // Try top 3 new ones
+            for (const url of httpsInstances.slice(0, 3)) {
+                try {
+                    const res = await fetch(`${url}/api/v1/search?q=test`);
+                    if (res.ok) {
+                        cachedInstance = url;
+                        return url;
+                    }
+                } catch (e) {}
+            }
+        } catch (e) {}
+
+        return null;
+    };
+
     const searchYouTube = async (query) => {
-        // Fallback to empty as we can't scrape without API
-        return [];
+        try {
+            const instance = await findWorkingInstance();
+            if (!instance) return null; // Signal failure to UI
+
+            const res = await fetch(`${instance}/api/v1/search?q=${encodeURIComponent(query)}`);
+            if (!res.ok) return [];
+            const json = await res.json();
+
+            // Filter only videos
+            return json.filter(item => item.type === 'video').map(item => ({
+                title: item.title,
+                videoId: item.videoId,
+                author: item.author,
+                channel: item.author, // Alias for UI
+                // Standard HQ thumb
+                image: `https://i.ytimg.com/vi/${item.videoId}/hqdefault.jpg`
+            }));
+        } catch (e) {
+            console.error("YT Search Error", e);
+            return [];
+        }
     };
 
     const searchAudius = async (query) => {
@@ -542,11 +632,14 @@
         const handleGenerateNames = async () => {
             if (!trackA || !trackB) return alert("Please load both tracks first!");
             setLoadingNames(true);
-            setTimeout(() => {
-                const names = generateSmartName(trackA, trackB);
+            try {
+                const names = await generateSmartName(trackA, trackB);
                 setGeneratedNames(names);
+            } catch (e) {
+                setGeneratedNames(["Mix 1", "Mix 2", "Mashup"]);
+            } finally {
                 setLoadingNames(false);
-            }, 800);
+            }
         };
 
         const handleAIDJ = async () => {
@@ -999,22 +1092,77 @@
 
         const handleAutoCompliment = async (sourceDeck, trackName, artistName) => {
             const targetDeck = sourceDeck === 'A' ? 'B' : 'A';
-            // Simple heuristic: Search for the same artist on Audius to find a "Genre song"
+            // 1. Ask LLM for a match
+            const prompt = `Suggest a famous mainstream song that is harmonically compatible with "${trackName}" by "${artistName}" for a DJ mashup. Return ONLY the song title and artist name in the format "Title - Artist". Do not add any extra text.`;
+
+            let query = artistName; // Fallback
+
             try {
-                const tracks = await searchAudius(artistName);
-                if (tracks && tracks.length > 0) {
-                    // Pick a random track from results that isn't the current one (by name)
-                    const others = tracks.filter(t => t.name !== trackName);
-                    if (others.length > 0) {
-                        const match = others[Math.floor(Math.random() * others.length)];
-                        handleLoadTrack(targetDeck, { ...match, trackName: match.name, artistName: match.artist });
+                const suggestion = await askLLM(prompt);
+                if (suggestion && suggestion.length < 100) {
+                    query = suggestion.trim();
+                    // Clean up quotes if present
+                    query = query.replace(/"/g, '');
+                    console.log("LLM Suggested:", query);
+                }
+            } catch (e) { console.error("LLM failed, falling back to artist search"); }
+
+            // 2. Search YouTube (most comprehensive) for the suggestion
+            try {
+                const videos = await searchYouTube(query);
+                if (videos && videos.length > 0) {
+                    // Pick the top result
+                    const match = videos[0];
+                    // Convert to track format
+                    const track = {
+                        name: match.title,
+                        trackName: match.title,
+                        artistName: match.author,
+                        url: `https://www.youtube.com/watch?v=${match.videoId}`, // Tone.js might fail here without a proxy, but we can try to find a preview or just load it for metadata.
+                        // Wait, deck needs a playble URL.
+                        // YouTube Audio Stream is hard to get without backend.
+                        // Strategy: We will try to find it on iTunes (preview) first for Deck Playback,
+                        // or Audius if possible.
+                        // If we are strictly client side, playing FULL YouTube in the Deck (AudioContext) is blocked by CORS.
+                        // The User asked for "Magic Match", usually implies loading the deck.
+                        // If we can't play it in the deck, we should alert.
+
+                        // Revised Strategy for Sandbox:
+                        // Search iTunes for the LLM suggestion. iTunes previews work in Tone.js.
+                    };
+
+                    // Try iTunes Search for the *Suggestion*
+                    const itunesResp = await fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(query)}&entity=song&limit=1`);
+                    const itunesData = await itunesResp.json();
+
+                    if (itunesData.results.length > 0) {
+                        const r = itunesData.results[0];
+                        handleLoadTrack(targetDeck, {
+                            name: r.trackName,
+                            trackName: r.trackName,
+                            artistName: r.artistName,
+                            url: r.previewUrl,
+                            image: r.artworkUrl100
+                        });
                     } else {
-                        // Fallback: pick any track
-                        const match = tracks[0];
-                        handleLoadTrack(targetDeck, { ...match, trackName: match.name, artistName: match.artist });
+                        // Fallback to Audius
+                         const audiusTracks = await searchAudius(query);
+                         if (audiusTracks.length > 0) {
+                             const r = audiusTracks[0];
+                             handleLoadTrack(targetDeck, { ...r, trackName: r.name, artistName: r.artist });
+                         } else {
+                             alert(`AI suggested "${query}", but no streamable version was found.`);
+                         }
                     }
                 } else {
-                    alert("No matches found on Audius.");
+                     // Fallback to Artist Search on Audius (Old logic)
+                     const audiusTracks = await searchAudius(artistName);
+                     if (audiusTracks.length > 0) {
+                         const r = audiusTracks[0];
+                         handleLoadTrack(targetDeck, { ...r, trackName: r.name, artistName: r.artist });
+                     } else {
+                         alert("No matches found.");
+                     }
                 }
             } catch (e) { console.error(e); alert("Could not find a match."); }
         };
