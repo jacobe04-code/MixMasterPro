@@ -349,13 +349,19 @@
           });
         };
 
-        const generateMagicMatch = async (trackName, artistName, currentKey, currentBpm, targetDeck, vibePreference) => {
+        const generateMagicMatch = async (trackName, artistName, currentKey, currentBpm, targetDeck, vibePreference, history = []) => {
           try {
             return await callGeminiWithRetry(async (ai) => {
               const camelot = CAMELOT_MAP[currentKey] || '8B';
+              const seeds = ['Deep', 'Energetic', 'Minimal', 'Melodic', 'Raw', 'Atmospheric', 'Driving', 'Groovy', 'Hypnotic', 'Soulful'];
+              const randomSeed = seeds[Math.floor(Math.random() * seeds.length)];
+
               const prompt = `Analysing acoustic fingerprint for "${trackName}" by "${artistName}" (Key: ${camelot}, BPM: ${currentBpm}).
               ${vibePreference ? `The current session vibe is: "${vibePreference}".` : ""}
-              Find a harmonically compatible match for Deck ${targetDeck} that fits the requested vibe.
+              Direction: ${randomSeed}.
+              Avoid these recent tracks: ${history.join(', ')}.
+              Find a harmonically compatible match for Deck ${targetDeck} that fits the requested vibe but explores a unique sonic direction.
+              Be adventurous but ensure mixability.
               Format strictly as: Artist - Title.`;
 
               const model = ai.getGenerativeModel({ model: 'gemini-1.5-flash-8b' });
@@ -368,7 +374,19 @@
             if(error.message && error.message.includes("Missing API Key")) throw error;
 
             console.error("Magic Match Error", error);
-            return "Daft Punk - One More Time";
+
+            const FALLBACKS = [
+              "Daft Punk - One More Time",
+              "Stardust - Music Sounds Better With You",
+              "Modjo - Lady",
+              "Deadmau5 - Strobe",
+              "Fisher - Losing It",
+              "Peggy Gou - It Makes You Forget",
+              "Bicep - Glue",
+              "Aphex Twin - Windowlicker",
+              "New Order - Blue Monday"
+            ];
+            return FALLBACKS[Math.floor(Math.random() * FALLBACKS.length)];
           }
         };
 
@@ -1273,6 +1291,7 @@
           const [isJDSpeaking, setIsJDSpeaking] = useState(false);
           const [vibeMood, setVibeMood] = useState(VIBE_OPTIONS[0].query);
           const [keyModalOpen, setKeyModalOpen] = useState(false);
+          const [trackHistory, setTrackHistory] = useState([]);
 
           const deckARef = useRef(null);
           const deckBRef = useRef(null);
@@ -1321,7 +1340,8 @@
                   masterKey,
                   masterBpm,
                   targetDeckId,
-                  vibeMood
+                  vibeMood,
+                  trackHistory
                 );
               } else {
                 matchQuery = vibeMood;
@@ -1333,6 +1353,11 @@
               if (data.results?.length > 0) {
                 const rIdx = Math.floor(Math.random() * data.results.length);
                 const r = data.results[rIdx];
+
+                // Update history
+                const trackIdStr = `${r.artistName} - ${r.trackName}`;
+                setTrackHistory(prev => [...prev.slice(-15), trackIdStr]);
+
                 const track = {
                   id: r.trackId,
                   name: r.trackName,
