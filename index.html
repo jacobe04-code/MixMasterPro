@@ -3,1491 +3,1715 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MixMaster Pro: Granular Edition</title>
-
-    <!-- React & ReactDOM -->
-    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-
-    <!-- Babel for JSX -->
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <title>MixMaster Pro AI</title>
 
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
 
-    <!-- Tone.js for Audio Processing -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&family=JetBrains+Mono:wght@700&display=swap" rel="stylesheet">
 
+    <!-- ERROR HANDLER STYLE -->
     <style>
-        body { background-color: #0f172a; color: white; font-family: 'Inter', sans-serif; }
-
-        /* Custom Slider Styling */
-        input[type=range] {
-            -webkit-appearance: none;
-            width: 100%;
-            background: transparent;
+        #error-overlay {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(50, 0, 0, 0.9);
+            color: #ffcccc;
+            z-index: 9999;
+            padding: 2rem;
+            font-family: monospace;
+            white-space: pre-wrap;
+            overflow: auto;
         }
-        input[type=range]::-webkit-slider-thumb {
-            -webkit-appearance: none;
-            height: 16px;
-            width: 16px;
-            border-radius: 50%;
-            background: #ffffff;
-            cursor: pointer;
-            margin-top: -6px;
-            box-shadow: 0 0 10px rgba(0,0,0,0.5);
-            transition: transform 0.1s;
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #020617;
+            color: white;
+            overflow-x: hidden;
         }
-        input[type=range]::-webkit-slider-thumb:hover {
-            transform: scale(1.2);
+        .font-mono {
+            font-family: 'JetBrains+Mono', monospace;
         }
-        input[type=range]::-webkit-slider-runnable-track {
-            width: 100%;
-            height: 4px;
-            cursor: pointer;
-            background: #334155;
-            border-radius: 2px;
-        }
-        input[type=range]:focus {
-            outline: none;
-        }
-
-        .deck-active-a { box-shadow: 0 0 25px rgba(59, 130, 246, 0.15); border-color: #3b82f6; }
-        .deck-active-b { box-shadow: 0 0 25px rgba(236, 72, 153, 0.15); border-color: #ec4899; }
-
-        .loader {
-            border: 3px solid #f3f3f3;
-            border-radius: 50%;
-            border-top: 3px solid #3498db;
-            width: 20px;
-            height: 20px;
-            animation: spin 1s linear infinite;
-        }
-        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-
-        /* Playhead Animation */
-        .playhead-line {
-            transition: left 0.1s linear;
-        }
-
-        /* Transition for UI Hiding */
-        .ui-container {
-            transition: opacity 0.5s ease-in-out;
-        }
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: #0f172a; }
+        ::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #475569; }
+        input[type=range] { -webkit-appearance: none; background: transparent; }
+        input[type=range]::-webkit-slider-runnable-track { width: 100%; height: 4px; cursor: pointer; background: #334155; border-radius: 2px; }
+        input[type=range]::-webkit-slider-thumb { height: 16px; width: 16px; border-radius: 50%; background: #ffffff; cursor: pointer; -webkit-appearance: none; margin-top: -6px; box-shadow: 0 0 10px rgba(0,0,0,0.5); }
     </style>
 </head>
 <body>
+    <div id="root"></div>
+    <div id="error-overlay"></div>
 
-<div id="root"></div>
+    <!-- GLOBAL ERROR HANDLER -->
+    <script>
+        window.onerror = function(msg, url, line, col, error) {
+            const overlay = document.getElementById('error-overlay');
+            if(overlay) {
+                // Don't show overlay for the specific API key error as it's handled by UI now
+                if (msg && msg.includes && msg.includes("Missing API Key")) return false;
 
-<script type="text/babel">
-
-    const { useState, useEffect, useRef, useImperativeHandle, forwardRef } = React;
-
-    // --- Deterministic Helpers ---
-    const getDeterministicNumber = (str, min, max) => {
-        let hash = 0;
-        for (let i = 0; i < str.length; i++) hash = str.charCodeAt(i) + ((hash << 5) - hash);
-        const normalized = Math.abs(hash) % 100;
-        return Math.floor(min + (normalized / 100) * (max - min));
-    };
-
-    // --- API Helpers ---
-
-    // ENTER YOUR GEMINI API KEY HERE IF YOU HAVE ONE
-    const GEMINI_API_KEY = "AIzaSyDxC7H9jPhsoqqd9wtBumj9GF2eMymTTnE";
-
-    // Uses Gemini if key present, else Pollinations.ai
-    const askLLM = async (prompt) => {
-        if (GEMINI_API_KEY && GEMINI_API_KEY.length > 5) {
-            try {
-                const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
-                });
-                const data = await response.json();
-                return data.candidates?.[0]?.content?.parts?.[0]?.text || null;
-            } catch (e) {
-                console.error("Gemini Text Error", e);
+                overlay.style.display = 'block';
+                overlay.innerText = `RUNTIME ERROR:\n${msg}\n\nLine: ${line}:${col}\n\n${error ? error.stack : ''}`;
             }
-        }
-        // Fallback
-        try {
-            const encodedPrompt = encodeURIComponent(prompt);
-            const response = await fetch(`https://text.pollinations.ai/${encodedPrompt}`);
-            const text = await response.text();
-            return text;
-        } catch (e) {
-            console.error("LLM Error:", e);
-            return null;
-        }
-    };
+            return false;
+        };
+    </script>
 
-    const generateSmartName = async (trackA, trackB) => {
-        const prompt = `Generate 3 creative mashup names for "${trackA.trackName}" by ${trackA.artistName} mixed with "${trackB.trackName}" by ${trackB.artistName}". Return only the names separated by commas.`;
-        const result = await askLLM(prompt);
-        if (result) {
-            return result.split(',').map(s => s.trim()).filter(s => s.length > 0).slice(0, 3);
-        }
-        return [`${trackA.trackName} vs ${trackB.trackName}`, `The ${trackA.artistName} Mashup`, "Untitled Mix"];
-    };
+    <!-- UMD LIBRARIES (No Build Step Required) -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/tone@14.7.77/build/Tone.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
-    // Helper to convert Raw PCM16 (from Gemini) to WAV so browser can play it
-    const pcmToWav = (base64PCM, sampleRate = 24000) => {
-        const binaryString = atob(base64PCM);
-        const len = binaryString.length;
-        const bytes = new Uint8Array(len);
-        for (let i = 0; i < len; i++) {
-            bytes[i] = binaryString.charCodeAt(i);
-        }
-        const wavHeader = new ArrayBuffer(44);
-        const view = new DataView(wavHeader);
-        const writeString = (view, offset, string) => {
-            for (let i = 0; i < string.length; i++) {
-                view.setUint8(offset + i, string.charCodeAt(i));
+    <!-- GenAI Bootstrap (ESM shim) -->
+    <script type="module">
+        import { GoogleGenAI } from "https://esm.sh/@google/genai@0.1.1";
+        window.GoogleGenAI = GoogleGenAI;
+    </script>
+
+    <script type="text/babel">
+        // DESTRUCTURE GLOBALS
+        const { useState, useEffect, useRef, useImperativeHandle, forwardRef, useCallback } = React;
+        const { createRoot } = ReactDOM;
+        // Tone is available as window.Tone
+        // GoogleGenAI is available as window.GoogleGenAI
+
+        // -----------------------------------------------------------------------------
+        // CONFIG & GLOBAL STATE
+        // -----------------------------------------------------------------------------
+
+        const getStoredKey = () => localStorage.getItem('GEMINI_API_KEY') || '';
+        const setStoredKey = (key) => localStorage.setItem('GEMINI_API_KEY', key);
+
+        const process = {
+            env: {
+                get API_KEY() { return getStoredKey(); }
             }
         };
-        writeString(view, 0, 'RIFF');
-        view.setUint32(4, 36 + len, true);
-        writeString(view, 8, 'WAVE');
-        writeString(view, 12, 'fmt ');
-        view.setUint32(16, 16, true);
-        view.setUint16(20, 1, true);
-        view.setUint16(22, 1, true);
-        view.setUint32(24, sampleRate, true);
-        view.setUint32(28, sampleRate * 2, true);
-        view.setUint16(32, 2, true);
-        view.setUint16(34, 16, true);
-        writeString(view, 36, 'data');
-        view.setUint32(40, len, true);
-        const wavBuffer = new Uint8Array(wavHeader.byteLength + len);
-        wavBuffer.set(new Uint8Array(wavHeader), 0);
-        wavBuffer.set(bytes, 44);
-        const blob = new Blob([wavBuffer], { type: 'audio/wav' });
-        return URL.createObjectURL(blob);
-    };
 
-    const generateSpeech = async (text, voiceName) => {
-        // 1. Try Gemini if Key is present
-        if (GEMINI_API_KEY && GEMINI_API_KEY.length > 5) {
-            try {
-                // Map internal names to Gemini names if needed, usually passed directly
-                const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent?key=${GEMINI_API_KEY}`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        contents: [{ parts: [{ text: text }] }],
-                        generationConfig: {
-                            responseModalities: ["AUDIO"],
-                            speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voiceName } } }
-                        }
-                    })
-                });
-                const data = await response.json();
-                const base64Audio = data.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-                if (base64Audio) return pcmToWav(base64Audio, 24000);
-            } catch (e) {
-                console.error("Gemini TTS Error", e);
-            }
-        }
+        // -----------------------------------------------------------------------------
+        // CONSTANTS & TYPES
+        // -----------------------------------------------------------------------------
 
-        // 2. Fallback to TikTok TTS (Public API) - High Quality AI Voices
-        // Map Gemini names to TikTok equivalents for fallback
-        const tiktokMap = {
-            "Puck": "en_us_006", // Energetic Male
-            "Fenrir": "en_us_ghostface", // Deep/Scary
-            "Aoede": "en_us_001", // Cheerful Female
-            "Charon": "en_us_007", // Deep Male
-            "Kore": "en_female_f08_salut_damour" // Singing/High
+        const VisualizerMode = {
+          BARS: 'bars',
+          WAVES: 'waves',
+          DOTS: 'dots',
+          PIXELS: 'pixels',
+          FIREWORKS: 'fireworks',
+          FIRE: 'fire'
         };
-        const tiktokVoice = tiktokMap[voiceName] || "en_us_002"; // Default Cool Guy
 
-        try {
-            const resp = await fetch("https://ottsy.weilbyte.dev/api/generation", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ text: text, voice: tiktokVoice })
-            });
-            const json = await resp.json();
-            if (json.data) {
-                return `data:audio/mp3;base64,${json.data}`;
-            }
-        } catch (e) { console.error("TikTok TTS Error", e); }
+        const KEYS = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 
-        // 3. Fallback to Google Translate (Robust)
-        return `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(text)}&tl=en&client=tw-ob`;
-    };
+        const CAMELOT_MAP = {
+          'C': '8B', 'C#': '3B', 'D': '10B', 'D#': '5B', 'E': '12B', 'F': '7B',
+          'F#': '2B', 'G': '9B', 'G#': '4B', 'A': '11B', 'A#': '6B', 'B': '1B',
+          'Am': '8A', 'A#m': '3A', 'Bm': '10A', 'Cm': '5A', 'C#m': '12A', 'Dm': '7A',
+          'D#m': '2A', 'Em': '9A', 'Fm': '4A', 'F#m': '11A', 'Gm': '6A', 'G#m': '1A'
+        };
 
-    let cachedInstance = null;
-    const findWorkingInstance = async () => {
-        if (cachedInstance) return cachedInstance;
-
-        // Priority list
-        const candidates = [
-            "https://inv.perditum.com",
-            "https://invidious.projectsegfau.lt",
-            "https://inv.bp.projectsegfau.lt",
-            "https://invidious.drgns.space",
-            "https://vid.puffyan.us"
+        const AI_VOICES = [
+          { name: "JD (Late Night FM)", id: "Charon" },
+          { name: "Puck (Energetic Male)", id: "Puck" },
+          { name: "Aoede (Cheerful Female)", id: "Aoede" },
+          { name: "Fenrir (Deep Nordic)", id: "Fenrir" },
+          { name: "Kore (Soft & Smooth)", id: "Kore" },
+          { name: "Zephyr (Breezy Accent)", id: "Zephyr" },
+          { name: "Orpheus (Classic Baritone)", id: "Orpheus" }
         ];
 
-        // Try candidates first
-        for (const url of candidates) {
-            try {
-                const controller = new AbortController();
-                const id = setTimeout(() => controller.abort(), 3000);
-                const res = await fetch(`${url}/api/v1/search?q=test`, { signal: controller.signal });
-                clearTimeout(id);
-                if (res.ok) {
-                    // Verify it returns JSON and not a captcha page
-                    const type = res.headers.get("content-type");
-                    if (type && type.includes("json")) {
-                        cachedInstance = url;
-                        return url;
-                    }
-                }
-            } catch (e) { console.log(`Instance failed: ${url}`); }
-        }
-
-        // Fallback: Fetch list
-        try {
-            const listRes = await fetch("https://api.invidious.io/instances.json?sort_by=health");
-            const list = await listRes.json();
-            const httpsInstances = list.filter(i => i[1].type === "https" && i[1].api === true).map(i => i[1].uri);
-
-            // Try top 3 new ones
-            for (const url of httpsInstances.slice(0, 3)) {
-                try {
-                    const res = await fetch(`${url}/api/v1/search?q=test`);
-                    if (res.ok) {
-                        cachedInstance = url;
-                        return url;
-                    }
-                } catch (e) {}
-            }
-        } catch (e) {}
-
-        return null;
-    };
-
-    const searchYouTube = async (query) => {
-        try {
-            const instance = await findWorkingInstance();
-            if (!instance) return null; // Signal failure to UI
-
-            const res = await fetch(`${instance}/api/v1/search?q=${encodeURIComponent(query)}`);
-            if (!res.ok) return [];
-            const json = await res.json();
-
-            // Filter only videos
-            return json.filter(item => item.type === 'video').map(item => ({
-                title: item.title,
-                videoId: item.videoId,
-                author: item.author,
-                channel: item.author, // Alias for UI
-                // Standard HQ thumb
-                image: `https://i.ytimg.com/vi/${item.videoId}/hqdefault.jpg`
-            }));
-        } catch (e) {
-            console.error("YT Search Error", e);
-            return [];
-        }
-    };
-
-    const searchAudius = async (query) => {
-        try {
-            let host = 'https://discoveryprovider.audius.co';
-            try {
-                const resp = await fetch('https://api.audius.co');
-                const json = await resp.json();
-                if (json.data && json.data.length > 0) host = json.data[0];
-            } catch (e) { console.warn("Using default Audius host"); }
-
-            const response = await fetch(`${host}/v1/tracks/search?query=${encodeURIComponent(query)}&app_name=MixMasterPro&limit=6`);
-            const data = await response.json();
-            return data.data.map(r => ({
-                id: r.id,
-                name: r.title,
-                artist: r.user.name,
-                image: r.artwork ? (r.artwork['150x150'] || r.artwork['480x480']) : null,
-                url: `${host}/v1/tracks/${r.id}/stream?app_name=MixMasterPro`,
-                type: 'full',
-                host: host
-            }));
-        } catch (e) {
-            console.error("Audius Search Error", e);
-            return [];
-        }
-    };
-
-    // --- Constants ---
-    const KEYS = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
-
-    // --- Icons ---
-    const Icon = ({ name, size = 20, className }) => {
-        const icons = {
-            play: <path d="M5 3l14 9-14 9V3z" />,
-            pause: <path d="M6 4h4v16H6zm8 0h4v16h-4z" />,
-            stop: <rect x="6" y="6" width="12" height="12" />,
-            search: <path d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />,
-            shuffle: <path d="M16 3h5v5M4 20L21 3M21 16v5h-5M15 15l5 5M4 4l5 5" />,
-            layers: <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" />,
-            upload: <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12" />,
-            music: <path d="M9 18V5l12-2v13M9 9l12-2M6 21a3 3 0 1 0 0-6 3 3 0 0 0 0 6zm12 0a3 3 0 1 0 0-6 3 3 0 0 0 0 6z" />,
-            sparkles: <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />,
-            mic: <><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></>,
-            activity: <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />,
-            target: <circle cx="12" cy="12" r="10" />,
-            wand: <path d="M15 4V2m0 2v2m0-2h2m-2 0h-2M5.7 14.3l9.6-9.6a1 1 0 0 1 1.4 0l1 1a1 1 0 0 1 0 1.4l-9.6 9.6a1 1 0 0 1-1.4 0l-1-1a1 1 0 0 1 0-1.4zM5 19l4-4" />,
-            eye: <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />,
-            eyeOff: <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24M1 1l22 22" />,
-            settings: <path d="M12.22 2h-.44a2 2 0 0 1-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.09a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
+        const ICONS = {
+          play: <path d="M5 3l14 9-14 9V3z" />,
+          pause: <path d="M6 4h4v16H6zm8 0h4v16h-4z" />,
+          stop: <rect x="6" y="6" width="12" height="12" />,
+          search: <path d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />,
+          shuffle: <path d="M16 3h5v5M4 20L21 3M21 16v5h-5M15 15l5 5M4 4l5 5" />,
+          layers: <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" />,
+          upload: <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12" />,
+          music: <path d="M9 18V5l12-2v13M9 9l12-2M6 21a3 3 0 1 0 0-6 3 3 0 0 0 0 6zm12 0a3 3 0 1 0 0-6 3 3 0 0 0 0 6z" />,
+          sparkles: <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />,
+          mic: <React.Fragment><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></React.Fragment>,
+          wand: <path d="M15 4V2m0 2v2m0-2h2m-2 0h-2M5.7 14.3l9.6-9.6a1 1 0 0 1 1.4 0l1 1a1 1 0 0 1 0 1.4l-9.6 9.6a1 1 0 0 1-1.4 0l-1-1a1 1 0 0 1 0-1.4zM5 19l4-4" />,
+          eye: <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />,
+          eyeOff: <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24M1 1l22 22" />,
+          refresh: <path d="M23 4v6h-6M1 20v-6h6M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />,
+          radio: <React.Fragment><circle cx="12" cy="12" r="2"/><path d="M16.24 7.76a6 6 0 0 1 0 8.49m-8.48-.01a6 6 0 0 1 0-8.49m11.31-2.82a10 10 0 0 1 0 14.14m-14.14 0a10 10 0 0 1 0-14.14"/></React.Fragment>
         };
-        return (
-            <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
-                {icons[name] || <circle cx="12" cy="12" r="10"/>}
-                {name === "settings" && <circle cx="12" cy="12" r="3" />}
-            </svg>
+
+        const Icon = ({ name, size = 20, className }) => (
+          <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+            {ICONS[name]}
+          </svg>
         );
-    };
 
-    // --- Audio Init ---
-    const initMaster = async () => {
-        await Tone.start();
-        if (!window.masterLimiter) {
-            window.masterLimiter = new Tone.Limiter(-1).toDestination();
-            window.masterCompressor = new Tone.Compressor({ ratio: 3, threshold: -20, release: 0.25, attack: 0.003 });
-            window.masterAnalyser = new Tone.Analyser("fft", 256);
-            window.masterRecorder = new Tone.Recorder();
+        // -----------------------------------------------------------------------------
+        // AUDIO SERVICE
+        // -----------------------------------------------------------------------------
 
-            // Chain: Source -> Compressor -> Limiter -> Destination
-            // Recorder and Analyser tap into the Limiter output
-            window.masterCompressor.connect(window.masterLimiter);
-            window.masterLimiter.connect(window.masterAnalyser);
-            window.masterLimiter.connect(window.masterRecorder);
+        class AudioEngine {
+          constructor() {
+            this.masterLimiter = new Tone.Limiter(-1).toDestination();
+            this.masterCompressor = new Tone.Compressor({ ratio: 4, threshold: -24, release: 0.3, attack: 0.01 });
+            this.masterAnalyser = new Tone.Analyser("fft", 256);
+            this.masterRecorder = new Tone.Recorder();
+
+            this.crossFade = new Tone.CrossFade(0.5);
+            this.deckAInput = new Tone.Gain(1);
+            this.deckBInput = new Tone.Gain(1);
+            this.musicDuckingNode = new Tone.Gain(1);
+
+            this.deckAInput.connect(this.crossFade.a);
+            this.deckBInput.connect(this.crossFade.b);
+
+            this.crossFade.connect(this.musicDuckingNode);
+            this.musicDuckingNode.connect(this.masterCompressor);
+
+            this.masterCompressor.connect(this.masterLimiter);
+            this.masterLimiter.connect(this.masterAnalyser);
+            this.masterLimiter.connect(this.masterRecorder);
+          }
+
+          static getInstance() {
+            if (!AudioEngine.instance) {
+              AudioEngine.instance = new AudioEngine();
+            }
+            return AudioEngine.instance;
+          }
+
+          async start() {
+            await Tone.start();
+          }
+
+          duckMusic(duck, duration = 0.8) {
+            const target = duck ? 0.15 : 1.0;
+            this.musicDuckingNode.gain.rampTo(target, duration);
+          }
+
+          decode(base64) {
+            const binaryString = atob(base64);
+            const len = binaryString.length;
+            const bytes = new Uint8Array(len);
+            for (let i = 0; i < len; i++) {
+              bytes[i] = binaryString.charCodeAt(i);
+            }
+            return bytes;
+          }
+
+          async decodeAudioData(data, ctx, sampleRate, numChannels) {
+            const dataInt16 = new Int16Array(data.buffer);
+            const frameCount = dataInt16.length / numChannels;
+            const buffer = ctx.createBuffer(numChannels, frameCount, sampleRate);
+
+            for (let channel = 0; channel < numChannels; channel++) {
+              const channelData = buffer.getChannelData(channel);
+              for (let i = 0; i < frameCount; i++) {
+                channelData[i] = dataInt16[i * numChannels + channel] / 32768.0;
+              }
+            }
+            return buffer;
+          }
         }
-    };
 
-    // --- Formatter ---
-    const formatTime = (seconds) => {
-        if (!seconds && seconds !== 0) return "0:00";
-        const m = Math.floor(seconds / 60);
-        const s = Math.floor(seconds % 60);
-        return `${m}:${s.toString().padStart(2, '0')}`;
-    };
+        const audioEngine = AudioEngine.getInstance();
 
-    // --- Common Components ---
-    const StemToggle = ({ label, active, onClick, disabled, color }) => (
-        <button
-            onClick={onClick}
-            disabled={disabled}
-            className={`px-3 py-1 text-[10px] font-bold uppercase rounded-full transition-all border
-                ${active
-                    ? (color === 'blue' ? 'bg-blue-500 border-blue-500 text-white' : 'bg-pink-500 border-pink-500 text-white')
-                    : 'bg-slate-800/50 border-slate-700 text-slate-400 hover:border-slate-500 disabled:opacity-30 disabled:cursor-not-allowed'}`}
-        >
-            {label}
-        </button>
-    );
+        // -----------------------------------------------------------------------------
+        // GEMINI SERVICE
+        // -----------------------------------------------------------------------------
 
-    // --- Global Visualizer Component ---
-    const GlobalVisualizer = ({ mode }) => {
-        const canvasRef = useRef(null);
-        const particlesRef = useRef([]);
+        const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
-        useEffect(() => {
-            let rafId;
+        async function callGeminiWithRetry(fn, retries = 3) {
+          let delay = 1000;
+          const apiKey = process.env.API_KEY;
+          if (!apiKey || apiKey === "PLACEHOLDER_API_KEY") {
+             throw new Error("Missing API Key. Please click 'Update Key' to enter your Gemini API Key.");
+          }
+
+          if(!window.GoogleGenAI) {
+             throw new Error("Google GenAI SDK not loaded yet.");
+          }
+
+          const ai = new window.GoogleGenAI({ apiKey: apiKey });
+          for (let i = 0; i < retries; i++) {
+            try {
+              return await fn(ai);
+            } catch (error) {
+              const isRateLimit = error.message?.includes('429') || error.status === 429;
+              if (isRateLimit && i < retries - 1) {
+                await sleep(delay);
+                delay *= 2;
+                continue;
+              }
+              throw error;
+            }
+          }
+          throw new Error("Maximum retries exceeded");
+        }
+
+        const aiDJFunctionDeclarations = [
+          {
+            name: 'load_track',
+            description: 'Search for and load a track into a specific deck.',
+            parameters: {
+              type: 'OBJECT',
+              properties: {
+                deck: { type: 'STRING', enum: ['A', 'B'] },
+                query: { type: 'STRING' },
+              },
+              required: ['deck', 'query'],
+            },
+          },
+          {
+            name: 'smart_transition',
+            description: 'Perform a professional crossfade transition.',
+            parameters: {
+              type: 'OBJECT',
+              properties: {
+                targetDeck: { type: 'STRING', enum: ['A', 'B'] },
+                duration: { type: 'NUMBER' },
+                swapOtherDeck: { type: 'BOOLEAN' }
+              },
+              required: ['targetDeck', 'duration'],
+            },
+          },
+          {
+            name: 'sync_master_levels',
+            description: 'Adjust global sync, BPM, and key.',
+            parameters: {
+              type: 'OBJECT',
+              properties: {
+                bpm: { type: 'NUMBER' },
+                key: { type: 'STRING' },
+              },
+            },
+          },
+          {
+            name: 'vibe_shift',
+            description: 'Trigger a complete atmosphere change.',
+            parameters: {
+              type: 'OBJECT',
+              properties: {
+                mood: { type: 'STRING' }
+              },
+              required: ['mood'],
+            }
+          },
+          {
+            name: 'set_auto_pilot',
+            description: 'Enable or disable JD\'s autonomous mixing mode.',
+            parameters: {
+              type: 'OBJECT',
+              properties: {
+                enabled: { type: 'BOOLEAN' }
+              },
+              required: ['enabled'],
+            }
+          }
+        ];
+
+        const interactWithAIDJ = async (message, history, context) => {
+          return callGeminiWithRetry(async (ai) => {
+            const limitedHistory = history.slice(-6);
+            const contents = [...limitedHistory, { role: 'user', parts: [{ text: message }] }];
+
+            const model = ai.getGenerativeModel({
+                model: 'gemini-1.5-flash-8b',
+                systemInstruction: `You are 'JD', a world-class AI DJ host with a deep, smooth, charismatic late-night FM personality.
+                TONE RULES:
+                1. NEVER use the phrase "Loud and clear" or generic affirmations.
+                2. BE TECHNICAL: Mention 'transient response', 'harmonic saturation', etc.
+                3. BE COOL: You are in the booth.
+                4. BREVITY: Keep spoken responses under 20 words.
+
+                CONTEXT: ${JSON.stringify(context)}.
+                GOAL: Use tools like 'vibe_shift' or 'set_auto_pilot' if requested.`
+            });
+
+            const result = await model.generateContent({
+              contents: contents,
+              tools: [{ functionDeclarations: aiDJFunctionDeclarations }],
+            });
+
+            const response = await result.response;
+            const calls = response.functionCalls();
+            const text = response.text();
+
+            return {
+                text: text,
+                functionCalls: calls ? calls.map(c => ({ name: c.name, args: c.args })) : []
+            };
+          });
+        };
+
+        const generateMagicMatch = async (trackName, artistName, currentKey, currentBpm, targetDeck, vibePreference) => {
+          try {
+            return await callGeminiWithRetry(async (ai) => {
+              const camelot = CAMELOT_MAP[currentKey] || '8B';
+              const prompt = `Analysing acoustic fingerprint for "${trackName}" by "${artistName}" (Key: ${camelot}, BPM: ${currentBpm}).
+              ${vibePreference ? `The current session vibe is: "${vibePreference}".` : ""}
+              Find a harmonically compatible match for Deck ${targetDeck} that fits the requested vibe.
+              Format strictly as: Artist - Title.`;
+
+              const model = ai.getGenerativeModel({ model: 'gemini-1.5-flash-8b' });
+              const result = await model.generateContent(prompt);
+              const response = await result.response;
+              return response.text().trim();
+            });
+          } catch (error) {
+            // Rethrow missing API key error so UI can handle it
+            if(error.message && error.message.includes("Missing API Key")) throw error;
+
+            console.error("Magic Match Error", error);
+            return "Daft Punk - One More Time";
+          }
+        };
+
+        const generateMashupNames = async (trackA, trackB) => {
+          return callGeminiWithRetry(async (ai) => {
+            const model = ai.getGenerativeModel({
+                model: 'gemini-1.5-flash-8b',
+                generationConfig: { responseMimeType: "application/json" }
+            });
+            const result = await model.generateContent(
+                `Generate 3 creative mashup names for a mix of "${trackA}" and "${trackB}". Return a JSON array of strings.`
+            );
+            try {
+              return JSON.parse(result.response.text());
+            } catch (e) {
+              return ["Sonic Merge", "Wave Blender", "Beat Fusion"];
+            }
+          });
+        };
+
+        const generateDJIntro = async (trackA, trackB, voiceName) => {
+          const introText = await callGeminiWithRetry(async (ai) => {
+            const model = ai.getGenerativeModel({ model: 'gemini-1.5-flash-8b' });
+            const result = await model.generateContent(
+                `Write a very short (max 12 words), charismatic late-night radio DJ intro for a mashup of "${trackA}" and "${trackB}".`
+            );
+            return result.response.text();
+          });
+          return null;
+        };
+
+        const getAssistantTip = async (context) => {
+          return callGeminiWithRetry(async (ai) => {
+             const model = ai.getGenerativeModel({ model: 'gemini-1.5-flash-8b' });
+             const result = await model.generateContent(
+                `Based on this DJ state: ${JSON.stringify(context)}, give a very brief technical tip (max 8 words) to improve the mix.`
+             );
+             return result.response.text().trim();
+          });
+        };
+
+        // -----------------------------------------------------------------------------
+        // COMPONENTS
+        // -----------------------------------------------------------------------------
+
+        const ApiKeyModal = ({ isOpen, onClose }) => {
+            const [key, setKey] = useState('');
+
+            if (!isOpen) return null;
+
+            const handleSave = () => {
+                if(key.trim()) {
+                    setStoredKey(key.trim());
+                    window.location.reload();
+                }
+            };
+
+            return (
+                <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+                    <div className="bg-slate-900 border border-white/10 p-8 rounded-3xl max-w-md w-full shadow-2xl">
+                        <h2 className="text-2xl font-black text-white mb-4">ENTER API KEY</h2>
+                        <p className="text-slate-400 text-sm mb-6">
+                            To enable AI DJ features, please enter your Google Gemini API Key.
+                            Stored locally.
+                        </p>
+                        <input
+                            type="password"
+                            placeholder="AIza..."
+                            value={key}
+                            onChange={(e) => setKey(e.target.value)}
+                            className="w-full bg-black/50 border border-white/20 rounded-xl p-4 text-white mb-6 focus:border-blue-500 outline-none"
+                        />
+                        <div className="flex gap-4">
+                            <button onClick={onClose} className="flex-1 py-3 rounded-xl font-bold text-slate-400 hover:text-white hover:bg-white/5 transition-all">
+                                CANCEL
+                            </button>
+                            <button onClick={handleSave} className="flex-1 py-3 bg-blue-600 hover:bg-blue-500 rounded-xl font-bold text-white transition-all shadow-lg shadow-blue-500/20">
+                                SAVE & RELOAD
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        const Visualizer = ({ mode }) => {
+          const canvasRef = useRef(null);
+
+          useEffect(() => {
             const canvas = canvasRef.current;
+            if (!canvas) return;
             const ctx = canvas.getContext('2d');
+            if (!ctx) return;
+
+            let rafId;
             let smoothedVol = 0;
 
-            class Particle {
-                constructor(x, y, color, type) {
-                    this.x = x;
-                    this.y = y;
-                    this.color = color;
-                    this.type = type;
-                    this.life = 1.0;
-
-                    if (type === 'firework') {
-                        const angle = Math.random() * Math.PI * 2;
-                        const speed = Math.random() * 6 + 2;
-                        this.vx = Math.cos(angle) * speed;
-                        this.vy = Math.sin(angle) * speed;
-                        this.decay = Math.random() * 0.01 + 0.015;
-                        this.size = Math.random() * 3 + 1;
-                    } else if (type === 'fire') {
-                        this.vx = (Math.random() - 0.5) * 2;
-                        this.vy = -(Math.random() * 4 + 3);
-                        this.decay = Math.random() * 0.03 + 0.01;
-                        this.size = Math.random() * 30 + 15;
-                        this.wobble = Math.random() * Math.PI * 2;
-                    }
-                }
-                update() {
-                    if (this.type === 'firework') {
-                        this.x += this.vx; this.y += this.vy; this.vy += 0.1; this.life -= this.decay;
-                    } else if (this.type === 'fire') {
-                        this.x += this.vx + Math.sin(this.wobble) * 0.5;
-                        this.y += this.vy;
-                        this.wobble += 0.1;
-                        this.life -= this.decay;
-                        this.size *= 0.96;
-                    }
-                }
-                draw(ctx) {
-                    if (this.life <= 0) return;
-                    ctx.save();
-                    ctx.globalAlpha = this.life;
-
-                    if (this.type === 'fire') {
-                        ctx.globalCompositeOperation = 'screen';
-                        let r, g, b;
-                        if (this.life > 0.6) {
-                            r = 59 + (200 - 59) * (this.life - 0.5) * 2;
-                            g = 130 + (230 - 130) * (this.life - 0.5) * 2;
-                            b = 246;
-                        } else {
-                            const t = this.life / 0.6;
-                            r = 236 - (236 - 168) * t;
-                            g = 72 + (85 - 72) * t;
-                            b = 153 + (247 - 153) * t;
-                        }
-                        ctx.fillStyle = `rgba(${Math.floor(r)}, ${Math.floor(g)}, ${Math.floor(b)}, ${this.life})`;
-                        ctx.beginPath();
-                        ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
-                        ctx.fill();
-                    } else {
-                        ctx.fillStyle = this.color;
-                        ctx.beginPath();
-                        ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
-                        ctx.fill();
-                    }
-                    ctx.restore();
-                }
-            }
-
             const draw = () => {
-                if (canvas.width !== window.innerWidth || canvas.height !== window.innerHeight) {
-                    canvas.width = window.innerWidth;
-                    canvas.height = window.innerHeight;
+              if (canvas.width !== window.innerWidth || canvas.height !== window.innerHeight) {
+                canvas.width = window.innerWidth;
+                canvas.height = window.innerHeight;
+              }
+              const w = canvas.width;
+              const h = canvas.height;
+
+              if (mode === VisualizerMode.FIRE) {
+                ctx.fillStyle = 'rgba(2, 6, 23, 0.2)';
+                ctx.fillRect(0, 0, w, h);
+              } else {
+                ctx.clearRect(0, 0, w, h);
+              }
+
+              const analyser = audioEngine.masterAnalyser;
+              if (analyser) {
+                const values = analyser.getValue();
+                let sum = 0;
+                for (let i = 0; i < values.length; i++) sum += values[i] ** 2;
+                const rms = Math.sqrt(sum / values.length);
+                smoothedVol += (rms - smoothedVol) * 0.1;
+
+                if (mode === VisualizerMode.BARS) {
+                  const barWidth = 15;
+                  const barSpacing = 5;
+                  const totalBars = Math.floor(w / (barWidth + barSpacing));
+                  for (let i = 0; i < totalBars; i++) {
+                    const freqIdx = Math.floor((i / totalBars) * (values.length / 2));
+                    const val = Math.max(0, (values[freqIdx] + 100) / 100);
+                    const height = val * 200;
+                    const gradient = ctx.createLinearGradient(0, h, 0, h - height);
+                    gradient.addColorStop(0, '#3b82f6');
+                    gradient.addColorStop(1, '#ec4899');
+                    ctx.fillStyle = gradient;
+                    ctx.globalAlpha = 0.4 + val * 0.6;
+                    ctx.fillRect(i * (barWidth + barSpacing), h - height, barWidth, height);
+                  }
+                } else if (mode === VisualizerMode.WAVES) {
+                  ctx.beginPath();
+                  ctx.lineWidth = 3;
+                  ctx.strokeStyle = '#3b82f6';
+                  for (let i = 0; i < values.length; i++) {
+                    const x = (i / values.length) * w;
+                    const y = h / 2 + (values[i] * 1.5) * (h / 4);
+                    if (i === 0) ctx.moveTo(x, y);
+                    else ctx.lineTo(x, y);
+                  }
+                  ctx.stroke();
+                } else if (mode === VisualizerMode.DOTS) {
+                  const gridSize = 50;
+                  for (let x = 0; x < w; x += gridSize) {
+                    for (let y = 0; y < h; y += gridSize) {
+                      const idx = Math.floor(((x + y) / (w + h)) * values.length) % values.length;
+                      const val = Math.max(0, (values[idx] + 100) / 100);
+                      ctx.beginPath();
+                      ctx.fillStyle = `rgba(168, 85, 247, ${val * 0.3})`;
+                      ctx.arc(x, y, val * gridSize * 0.5, 0, Math.PI * 2);
+                      ctx.fill();
+                    }
+                  }
                 }
-                const w = canvas.width;
-                const h = canvas.height;
-                const time = Date.now() * 0.001;
+              }
 
-                if (mode === 'fire') {
-                    ctx.fillStyle = 'rgba(15, 23, 42, 0.2)';
-                    ctx.fillRect(0, 0, w, h);
-                } else {
-                    ctx.clearRect(0, 0, w, h);
-                }
-
-                if (window.masterAnalyser) {
-                    const values = window.masterAnalyser.getValue();
-                    let sum = 0;
-                    for(let i = 0; i < values.length; i++) sum += values[i] ** 2;
-                    const rms = Math.sqrt(sum / values.length);
-                    smoothedVol += (rms - smoothedVol) * 0.1;
-
-                    const bassSum = values.slice(0, 10).reduce((a,b) => a + (b+100), 0) / 10;
-                    const isBeat = bassSum > 85;
-
-                    if (mode === 'bars') {
-                        const barSpacing = 10;
-                        const barWidth = 20;
-                        const perimeter = (w + h) * 2;
-                        const totalSteps = Math.floor(perimeter / (barWidth + barSpacing));
-                        let currentDist = 0;
-
-                        for (let i = 0; i < totalSteps; i++) {
-                            const freqIdx = Math.floor(Math.abs(Math.sin(i * 0.1)) * (values.length - 1));
-                            const val = Math.max(0, (values[freqIdx] + 100) / 100);
-                            const height = val * 100;
-                            const gradientPos = i / totalSteps;
-                            const r = 59 + (236 - 59) * gradientPos;
-                            const g = 130 + (72 - 130) * gradientPos;
-                            const b = 246 + (153 - 246) * gradientPos;
-                            ctx.fillStyle = `rgba(${Math.round(r)},${Math.round(g)},${Math.round(b)}, ${0.3 + val * 0.5})`;
-                            if (currentDist < w) ctx.fillRect(currentDist, 0, barWidth, height);
-                            else if (currentDist < w + h) ctx.fillRect(w - height, currentDist - w, height, barWidth);
-                            else if (currentDist < w + h + w) ctx.fillRect(w - (currentDist - (w + h)) - barWidth, h - height, barWidth, height);
-                            else if (currentDist < perimeter) ctx.fillRect(0, h - (currentDist - (w + h + w)) - barWidth, height, barWidth);
-                            currentDist += barWidth + barSpacing;
-                        }
-                    }
-                    else if (mode === 'waves') {
-                        const baseThickness = 20;
-                        const waveMag = 80;
-                        const step = 20;
-                        const intensity = Math.min(1, smoothedVol * 4);
-                        const alpha = 0.2 + (intensity * 0.4);
-                        const gradient = ctx.createLinearGradient(0, 0, w, h);
-                        gradient.addColorStop(0, `rgba(59, 130, 246, ${alpha})`);
-                        gradient.addColorStop(1, `rgba(236, 72, 153, ${alpha})`);
-                        ctx.fillStyle = gradient;
-                        ctx.beginPath();
-                        ctx.moveTo(0,0); ctx.lineTo(w,0); ctx.lineTo(w,h); ctx.lineTo(0,h); ctx.closePath();
-                        for (let x = 0; x <= w; x += step) {
-                            const idx = Math.floor((x / w) * values.length) % values.length;
-                            const val = Math.max(0, (values[idx] + 100)/100);
-                            const y = baseThickness + (val * waveMag) + (Math.sin(x*0.01 + time)*10);
-                            if(x===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
-                        }
-                        for (let y = 0; y <= h; y += step) {
-                            const idx = Math.floor((y / h) * values.length) % values.length;
-                            const val = Math.max(0, (values[idx] + 100)/100);
-                            const x = w - (baseThickness + (val * waveMag) + (Math.sin(y*0.01 + time)*10));
-                            ctx.lineTo(x,y);
-                        }
-                        for (let x = w; x >= 0; x -= step) {
-                            const idx = Math.floor((x / w) * values.length) % values.length;
-                            const val = Math.max(0, (values[idx] + 100)/100);
-                            const y = h - (baseThickness + (val * waveMag) + (Math.sin(x*0.01 + time)*10));
-                            ctx.lineTo(x,y);
-                        }
-                        for (let y = h; y >= 0; y -= step) {
-                            const idx = Math.floor((y / h) * values.length) % values.length;
-                            const val = Math.max(0, (values[idx] + 100)/100);
-                            const x = baseThickness + (val * waveMag) + (Math.sin(y*0.01 + time)*10);
-                            ctx.lineTo(x,y);
-                        }
-                        ctx.closePath();
-                        ctx.fill("evenodd");
-                    }
-                    else if (mode === 'dots') {
-                        const gridSize = 40;
-                        for(let x = 0; x < w; x+=gridSize) {
-                            for(let y = 0; y < h; y+=gridSize) {
-                                const idx = Math.floor(((x+y)/(w+h)) * values.length) % values.length;
-                                const val = Math.max(0, (values[idx] + 100)/100);
-                                const r = val * gridSize * 0.6;
-                                ctx.beginPath();
-                                ctx.fillStyle = `rgba(168, 85, 247, ${val * 0.4})`;
-                                ctx.arc(x, y, r, 0, Math.PI*2);
-                                ctx.fill();
-                            }
-                        }
-                    }
-                    else if (mode === 'pixels') {
-                        const pixelSize = 40;
-                        for(let x = 0; x < w; x+=pixelSize) {
-                            for(let y = 0; y < h; y+=pixelSize) {
-                                const idx = Math.floor( (x/w) * values.length * 0.5 + (y/h) * values.length * 0.5 ) % values.length;
-                                const val = (values[idx] + 100) / 100;
-                                if(val > 0.6) {
-                                    const alpha = (val - 0.6) * 0.5;
-                                    ctx.fillStyle = `rgba(255, 255, 255, ${alpha})`;
-                                    ctx.fillRect(x, y, pixelSize-2, pixelSize-2);
-                                }
-                            }
-                        }
-                    }
-                    else if (mode === 'fireworks') {
-                        if (isBeat && Math.random() > 0.85) {
-                            const x = Math.random() * w;
-                            const y = Math.random() * h * 0.8;
-                            const hue = Math.random() * 360;
-                            const color = `hsl(${hue}, 100%, 70%)`;
-                            for(let i=0; i<30; i++) particlesRef.current.push(new Particle(x, y, color, 'firework'));
-                        }
-                    }
-                    else if (mode === 'fire') {
-                        const vol = Math.max(0, (values[5] + 100)/100);
-                        const particlesToSpawn = Math.floor(vol * 4);
-                        for(let i=0; i < particlesToSpawn; i++) {
-                            particlesRef.current.push(new Particle(Math.random() * w, h + 20, null, 'fire'));
-                        }
-                    }
-
-                    if (mode === 'fireworks' || mode === 'fire') {
-                        for(let i = particlesRef.current.length - 1; i >= 0; i--) {
-                            const p = particlesRef.current[i];
-                            p.update();
-                            p.draw(ctx);
-                            if (p.life <= 0) particlesRef.current.splice(i, 1);
-                        }
-                    } else {
-                        particlesRef.current = [];
-                    }
-                }
-                rafId = requestAnimationFrame(draw);
+              rafId = requestAnimationFrame(draw);
             };
+
             draw();
             return () => cancelAnimationFrame(rafId);
-        }, [mode]);
+          }, [mode]);
 
-        return <canvas ref={canvasRef} className="fixed inset-0 z-0 pointer-events-none" />;
-    };
-
-    const ReferencePlayer = () => {
-        const [query, setQuery] = useState("");
-        const [results, setResults] = useState([]);
-        const [selectedVideo, setSelectedVideo] = useState(null);
-        const [loading, setLoading] = useState(false);
-        const [hasSearched, setHasSearched] = useState(false);
-        const [source, setSource] = useState('youtube');
-        const [error, setError] = useState(null);
-
-        const handleSearch = async (e) => {
-            e.preventDefault();
-            if(!query) return;
-            setLoading(true);
-            setResults([]);
-            setSelectedVideo(null);
-            setHasSearched(true);
-            setError(null);
-
-            if (source === 'youtube') {
-                const videos = await searchYouTube(query);
-                if (videos === null) {
-                    setError("Search failed. Check your API Key in Settings.");
-                } else if (videos.length === 0) {
-                    setError("No videos found.");
-                } else {
-                    setResults(videos);
-                }
-            } else {
-                const tracks = await searchAudius(query);
-                if (!tracks || tracks.length === 0) setError("No tracks found on Audius.");
-                else setResults(tracks);
-            }
-            setLoading(false);
+          return <canvas ref={canvasRef} className="fixed inset-0 z-0 pointer-events-none opacity-40" />;
         };
 
-        return (
-            <div className="w-full max-w-4xl mt-8 bg-slate-900/30 backdrop-blur-md rounded-xl border border-slate-700/50 p-4 mb-20 relative z-20 shadow-2xl">
-                <div className="flex justify-between items-center mb-4">
-                    <h3 className="text-lg font-bold text-white flex items-center gap-2"><Icon name="music" className="text-green-400" /> Reference Studio (Full Song Playback)</h3>
-                    <div className="flex gap-2">
-                        <button onClick={() => setSource('youtube')} className={`px-2 py-1 text-[10px] font-bold uppercase rounded ${source==='youtube' ? 'bg-red-600 text-white' : 'bg-slate-800 text-slate-400'}`}>YouTube</button>
-                        <button onClick={() => setSource('audius')} className={`px-2 py-1 text-[10px] font-bold uppercase rounded ${source==='audius' ? 'bg-purple-600 text-white' : 'bg-slate-800 text-slate-400'}`}>Audius</button>
-                    </div>
+        const Deck = forwardRef(({ id, track, masterBpm, masterKey, syncEnabled, onMagicMatch, onReportBpm, onEnded }, ref) => {
+          const [player, setPlayer] = useState(null);
+          const [loaded, setLoaded] = useState(false);
+          const [isPlaying, setIsPlaying] = useState(false);
+          const [currentTime, setCurrentTime] = useState(0);
+          const [duration, setDuration] = useState(0);
+          const [originalBpm, setOriginalBpm] = useState(128);
+          const [originalKey, setOriginalKey] = useState('C');
+          const [playbackRate, setPlaybackRate] = useState(1);
+          const [pitchShift, setPitchShift] = useState(0);
+          const [volume, setVolume] = useState(0);
+
+          const eqRef = useRef(null);
+          const pitchRef = useRef(null);
+          const canvasRef = useRef(null);
+          const rafRef = useRef(0);
+          const pendingPlayRef = useRef(false);
+
+          const playbackRef = useRef({
+            isPlaying: false,
+            startTime: 0,
+            offset: 0
+          });
+
+          const handleStop = useCallback(() => {
+            if (player) player.stop();
+            playbackRef.current.isPlaying = false;
+            playbackRef.current.offset = 0;
+            setIsPlaying(false);
+            setCurrentTime(0);
+            pendingPlayRef.current = false;
+          }, [player]);
+
+          const handlePlay = useCallback(async (offset = playbackRef.current.offset) => {
+            if (!player) return;
+
+            if (!loaded || !player.buffer.loaded) {
+              pendingPlayRef.current = true;
+              return;
+            }
+
+            if (playbackRef.current.isPlaying) return;
+
+            await audioEngine.start();
+            const startOffset = Math.max(0, Math.min(offset, duration));
+
+            try {
+              player.start(0, startOffset);
+              playbackRef.current.isPlaying = true;
+              playbackRef.current.startTime = player.now();
+              playbackRef.current.offset = startOffset;
+              setIsPlaying(true);
+              pendingPlayRef.current = false;
+            } catch (err) {
+              console.error(`Deck ${id} failed to play:`, err);
+            }
+          }, [player, loaded, duration, id]);
+
+          useImperativeHandle(ref, () => ({
+            play: () => handlePlay(),
+            stop: () => handleStop(),
+            setEQ: (low, mid, high) => {
+              if (eqRef.current) {
+                eqRef.current.low.value = low;
+                eqRef.current.mid.value = mid;
+                eqRef.current.high.value = high;
+              }
+            },
+            isPlaying: playbackRef.current.isPlaying,
+            getCurrentKey: () => originalKey
+          }));
+
+          useEffect(() => {
+            if (!track || !track.url) return;
+
+            let isMounted = true;
+            const init = async () => {
+              setLoaded(false);
+              handleStop();
+
+              const newPlayer = new Tone.Player({
+                url: track.url,
+                loop: true,
+                onload: () => {
+                  if (!isMounted) return;
+                  setLoaded(true);
+                  setDuration(newPlayer.buffer.duration);
+                  const detectedBpm = Math.floor(Math.random() * 20 + 115);
+                  const detectedKey = KEYS[Math.floor(Math.random() * KEYS.length)];
+                  setOriginalBpm(detectedBpm);
+                  setOriginalKey(detectedKey);
+                  onReportBpm(detectedBpm);
+                  drawWaveform(newPlayer.buffer);
+
+                  if (pendingPlayRef.current) {
+                    handlePlay();
+                  }
+                },
+                onerror: (e) => console.error("Tone Player Error:", e),
+                onstop: () => {
+                  if (newPlayer.state === 'stopped' && playbackRef.current.isPlaying) {
+                     const isNearEnd = Math.abs(currentTime - duration) < 0.5;
+                     if (isNearEnd && !newPlayer.loop) {
+                        playbackRef.current.isPlaying = false;
+                        setIsPlaying(false);
+                        onEnded?.(id);
+                     }
+                  }
+                }
+              });
+
+              const eq = new Tone.EQ3(0, 0, 0);
+              const pitch = new Tone.PitchShift(0);
+              const targetInput = id === 'A' ? audioEngine.deckAInput : audioEngine.deckBInput;
+
+              newPlayer.chain(eq, pitch, targetInput);
+
+              eqRef.current = eq;
+              pitchRef.current = pitch;
+              setPlayer(newPlayer);
+            };
+            init();
+
+            return () => {
+              isMounted = false;
+              if (player) player.dispose();
+            };
+          }, [track?.id, track?.url, id]);
+
+          useEffect(() => {
+            if (!player || !loaded) return;
+
+            let targetRate = playbackRate;
+            let targetPitch = pitchShift;
+
+            if (syncEnabled) {
+              targetRate = masterBpm / originalBpm;
+              let keyDiff = KEYS.indexOf(masterKey) - KEYS.indexOf(originalKey);
+              if (keyDiff > 6) keyDiff -= 12;
+              if (keyDiff < -6) keyDiff += 12;
+              targetPitch = keyDiff;
+            }
+
+            if (player.playbackRate !== targetRate) player.playbackRate = targetRate;
+            if (pitchRef.current && pitchRef.current.pitch !== targetPitch) {
+              pitchRef.current.pitch = targetPitch;
+            }
+          }, [masterBpm, masterKey, syncEnabled, loaded, originalBpm, originalKey, playbackRate, pitchShift, player]);
+
+          useEffect(() => {
+            if (player) player.volume.value = volume;
+          }, [volume, player]);
+
+          const handleSeek = (e) => {
+            if (!loaded || !player) return;
+            const rect = e.currentTarget.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const percent = Math.max(0, Math.min(x / rect.width, 1));
+            const newOffset = percent * duration;
+            if (playbackRef.current.isPlaying) {
+              player.stop();
+              playbackRef.current.isPlaying = false;
+              handlePlay(newOffset);
+            } else {
+              playbackRef.current.offset = newOffset;
+              setCurrentTime(newOffset);
+            }
+          };
+
+          useEffect(() => {
+            const update = () => {
+              if (playbackRef.current.isPlaying && player) {
+                const elapsed = (player.now() - playbackRef.current.startTime) * player.playbackRate;
+                const total = (playbackRef.current.offset + elapsed) % duration;
+                setCurrentTime(total);
+              }
+              rafRef.current = requestAnimationFrame(update);
+            };
+            update();
+            return () => cancelAnimationFrame(rafRef.current);
+          }, [duration, player]);
+
+          const drawWaveform = (buffer) => {
+            const canvas = canvasRef.current;
+            if (!canvas) return;
+            const ctx = canvas.getContext('2d');
+            if (!ctx) return;
+            const data = buffer.getChannelData(0);
+            const step = Math.ceil(data.length / canvas.width);
+            const amp = canvas.height / 2;
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.fillStyle = id === 'A' ? '#3b82f6' : '#ec4899';
+            for (let i = 0; i < canvas.width; i++) {
+              let min = 1.0, max = -1.0;
+              for (let j = 0; j < step; j++) {
+                const val = data[i * step + j];
+                if (val < min) min = val;
+                if (val > max) max = val;
+              }
+              ctx.fillRect(i, (1 + min) * amp, 1, Math.max(1, (max - min) * amp));
+            }
+          };
+
+          return (
+            <div className={`relative bg-slate-900/60 backdrop-blur-xl rounded-3xl border-2 p-6 transition-all flex gap-6 group ${id === 'A' ? 'border-blue-500/40 shadow-blue-500/10' : 'border-pink-500/40 shadow-pink-500/10'}`}>
+              <div className="flex flex-col items-center justify-center gap-3">
+                <span className="text-[10px] font-black text-slate-500 uppercase tracking-tighter">VOL</span>
+                <div className="h-48 w-6 bg-black/60 rounded-full relative flex items-center justify-center overflow-hidden border border-white/10 group-hover:border-white/20 transition-all">
+                  <input
+                    type="range" min="-60" max="6" step="0.1"
+                    value={volume}
+                    onChange={(e) => setVolume(parseFloat(e.target.value))}
+                    className="h-40 -rotate-90 appearance-none bg-transparent cursor-pointer z-10"
+                    style={{ width: '160px' }}
+                  />
+                  <div className={`absolute bottom-0 w-full transition-all duration-75 ${id === 'A' ? 'bg-blue-500/20' : 'bg-pink-500/20'}`} style={{ height: `${((volume + 60) / 66) * 100}%` }} />
                 </div>
-                <form onSubmit={handleSearch} className="flex gap-2 mb-4">
-                    <input type="text" placeholder={`Search ${source === 'youtube' ? 'YouTube' : 'Audius'} for full song...`} className="flex-1 bg-slate-950/50 border border-slate-700 rounded px-4 py-2 text-white text-sm focus:border-green-500 outline-none" value={query} onChange={(e) => setQuery(e.target.value)} />
-                    <button type="submit" className="bg-green-600 hover:bg-green-500 px-6 py-2 rounded text-sm font-bold text-white transition disabled:opacity-50" disabled={loading}>{loading ? '...' : 'Search'}</button>
-                </form>
-                {error && <div className="text-red-400 text-xs font-bold mb-2 p-2 bg-red-900/20 rounded border border-red-900/50">{error}</div>}
-                {!selectedVideo && !loading && results.length > 0 && (
-                    <div className="grid grid-cols-1 gap-2">
-                        <div className="text-[10px] text-slate-500 uppercase font-bold mb-1">Select a track:</div>
-                        {results.map((item, idx) => (
-                            <button key={idx} onClick={() => setSelectedVideo(item)} className="flex items-center gap-4 p-3 bg-slate-800/50 hover:bg-slate-700/50 border border-slate-700/50 rounded-lg text-left transition-all group">
-                                <div className={`w-12 h-12 rounded-full flex items-center justify-center shrink-0 transition-colors ${source==='youtube' ? 'bg-red-600/20 group-hover:bg-red-600' : 'bg-purple-600/20 group-hover:bg-purple-600'}`}>
-                                    <Icon name="play" size={20} className={source==='youtube' ? "text-red-500 group-hover:text-white" : "text-purple-500 group-hover:text-white"} />
-                                </div>
-                                <div><div className="font-bold text-sm text-white">{source==='youtube' ? item.title : item.name}</div><div className="text-xs text-slate-400">{source==='youtube' ? item.channel : item.artist}</div></div>
-                            </button>
-                        ))}
+              </div>
+
+              <div className="flex-1 min-w-0">
+                <div className="flex justify-between items-start mb-4 gap-4">
+                  <div className="min-w-0">
+                    <h3 className={`text-2xl font-black italic tracking-tighter ${id === 'A' ? 'text-blue-400' : 'text-pink-400'}`}>DECK {id}</h3>
+                    <p className="text-sm font-bold truncate text-white">{track ? track.name : "EMPTY DECK"}</p>
+                    <div className="flex gap-2 mt-1">
+                      <span className="text-[9px] font-black bg-white/10 px-2 py-0.5 rounded text-white/70 uppercase">BPM: {originalBpm}</span>
+                      <span className="text-[9px] font-black bg-white/10 px-2 py-0.5 rounded text-white/70 uppercase">KEY: {CAMELOT_MAP[originalKey] || originalKey}</span>
                     </div>
-                )}
-                {selectedVideo && (
-                    <div className="space-y-3">
-                        <button onClick={() => setSelectedVideo(null)} className="text-xs font-bold text-slate-400 hover:text-white flex items-center gap-1">← Back</button>
-                        {source === 'youtube' ? (
-                            <div className="aspect-video w-full bg-black rounded-lg overflow-hidden border border-slate-800 shadow-lg relative">
-                                <iframe src={`https://www.youtube-nocookie.com/embed/${selectedVideo.videoId}?autoplay=1&rel=0&modestbranding=1`} width="100%" height="100%" frameBorder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowFullScreen title={selectedVideo.title}></iframe>
-                            </div>
-                        ) : (
-                            <div className="w-full bg-slate-900 rounded-lg border border-purple-500/30 p-4 flex flex-col gap-4 items-center">
-                                <img src={selectedVideo.image || "https://placehold.co/300x300/1e293b/white?text=No+Art"} alt="art" className="w-48 h-48 rounded shadow-lg object-cover" />
-                                <div className="text-center">
-                                    <div className="text-lg font-bold text-white">{selectedVideo.name}</div>
-                                    <div className="text-sm text-purple-400">{selectedVideo.artist}</div>
-                                </div>
-                                <audio controls autoPlay crossOrigin="anonymous" src={selectedVideo.url} className="w-full"></audio>
-                            </div>
-                        )}
+                  </div>
+                  <button
+                    onClick={() => onMagicMatch(id)}
+                    disabled={!track}
+                    className="shrink-0 flex items-center gap-2 px-4 py-2 bg-purple-600 hover:bg-purple-500 disabled:opacity-30 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all"
+                  >
+                    <Icon name="wand" size={14} /> MAGIC MIX
+                  </button>
+                </div>
+
+                <div className="h-28 bg-black/60 rounded-2xl mb-4 overflow-hidden relative border border-white/10 cursor-crosshair" onClick={handleSeek}>
+                  <canvas ref={canvasRef} width="400" height="112" className="w-full h-full opacity-40 group-hover:opacity-70 transition-opacity" />
+                  {loaded && <div className="absolute top-0 bottom-0 w-0.5 bg-white shadow-[0_0_15px_white] z-20" style={{ left: `${duration ? (currentTime / duration) * 100 : 0}%` }} />}
+                  {!loaded && track && (
+                     <div className="absolute inset-0 flex items-center justify-center bg-black/40">
+                        <div className="w-6 h-6 border-2 border-white/20 border-t-white rounded-full animate-spin" />
+                     </div>
+                  )}
+                </div>
+
+                <div className="flex gap-3 mb-6">
+                  <button onClick={() => handlePlay()} disabled={isPlaying} className={`flex-1 py-4 rounded-2xl font-black flex items-center justify-center gap-2 transition-all ${isPlaying ? 'bg-green-500 text-white' : 'bg-white/10 hover:bg-white/20 text-white border border-white/10'}`}>
+                    <Icon name="play" size={20} /> {isPlaying ? 'PLAYING' : 'PLAY'}
+                  </button>
+                  <button onClick={handleStop} disabled={!track} className="flex-1 py-4 bg-white/10 hover:bg-red-500 hover:text-white border border-white/10 text-white/70 rounded-2xl font-black flex items-center justify-center gap-2 transition-all">
+                    <Icon name="stop" size={20} /> STOP
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4 bg-black/40 p-4 rounded-2xl border border-white/5">
+                  <div className="space-y-2">
+                    <div className="flex justify-between text-[9px] font-black text-slate-500 uppercase">
+                      <span>TEMPO</span>
+                      <span className="text-white">{(syncEnabled ? (masterBpm/originalBpm) : playbackRate).toFixed(2)}x</span>
                     </div>
-                )}
+                    <input
+                      type="range" min="0.5" max="1.5" step="0.001"
+                      value={syncEnabled ? (masterBpm/originalBpm) : playbackRate}
+                      onChange={(e) => setPlaybackRate(parseFloat(e.target.value))}
+                      className={`w-full ${syncEnabled ? 'opacity-30 pointer-events-none' : ''}`}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <div className="flex justify-between text-[9px] font-black text-slate-500 uppercase">
+                      <span>PITCH</span>
+                      <span className="text-white">{(syncEnabled ? (pitchShift) : pitchShift) > 0 ? '+' : ''}{syncEnabled ? (pitchShift) : pitchShift}st</span>
+                    </div>
+                    <input
+                      type="range" min="-12" max="12" step="1"
+                      value={pitchShift}
+                      onChange={(e) => setPitchShift(parseInt(e.target.value))}
+                      className={`w-full ${syncEnabled ? 'opacity-30 pointer-events-none' : ''}`}
+                    />
+                  </div>
+                </div>
+              </div>
             </div>
-        );
-    };
+          );
+        });
 
-    const AIFeaturesPanel = ({ trackA, trackB }) => {
-        const [generatedNames, setGeneratedNames] = useState([]);
-        const [loadingNames, setLoadingNames] = useState(false);
-        const [djLoading, setDjLoading] = useState(false);
-        const [djPlaying, setDjPlaying] = useState(false);
-        const [selectedVoice, setSelectedVoice] = useState("Puck");
-        const djPlayerRef = useRef(null);
+        // --- MashupEngine ---
+        const MashupEngine = ({
+          onPlayMashup, isPlaying, masterBpm, setMasterBpm, masterKey, setMasterKey, syncEnabled, setSyncEnabled, onEQChange, autoDjMode, setAutoDjMode
+        }) => {
+          const [deckAConfig, setDeckAConfig] = useState({ low: true, mid: true, high: true });
+          const [deckBConfig, setDeckBConfig] = useState({ low: false, mid: true, high: true });
+          const [crossfade, setCrossfade] = useState(0.5);
 
-        const aiVoices = [
-            { name: "Gemini: Puck (High Energy)", id: "Puck" },
-            { name: "Gemini: Aoede (Cheerful)", id: "Aoede" },
-            { name: "Gemini: Fenrir (Deep)", id: "Fenrir" },
-            { name: "Gemini: Charon (Deep Male)", id: "Charon" },
-            { name: "Gemini: Kore (Soft)", id: "Kore" }
+          useEffect(() => { onEQChange('A', deckAConfig); }, [deckAConfig]);
+          useEffect(() => { onEQChange('B', deckBConfig); }, [deckBConfig]);
+          useEffect(() => { audioEngine.crossFade.fade.value = crossfade; }, [crossfade]);
+
+          const togglePart = (deck, part) => {
+            if (deck === 'A') setDeckAConfig(prev => ({ ...prev, [part]: !prev[part] }));
+            else setDeckBConfig(prev => ({ ...prev, [part]: !prev[part] }));
+          };
+
+          const EQBtn = ({ label, active, onClick, color }) => (
+            <button
+              onClick={onClick}
+              className={`flex-1 py-3 text-[9px] font-black uppercase rounded-xl border-2 transition-all transform active:scale-95 ${
+                active
+                  ? (color === 'blue' ? 'bg-blue-600 border-blue-400 text-white shadow-lg shadow-blue-500/30' : 'bg-pink-600 border-pink-400 text-white shadow-lg shadow-pink-500/30')
+                  : 'bg-black/40 border-white/5 text-slate-600 hover:border-white/20'
+              }`}
+            >
+              {label}
+            </button>
+          );
+
+          return (
+            <div className="w-full bg-slate-900/80 backdrop-blur-2xl rounded-[2.5rem] border border-white/10 p-10 shadow-[0_25px_50px_-12px_rgba(0,0,0,0.5)] relative overflow-hidden">
+              <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-blue-500 via-purple-500 to-pink-500 opacity-50" />
+
+              <div className="flex flex-col lg:flex-row justify-between items-center mb-10 gap-10">
+                <div className="flex flex-col">
+                  <h2 className="text-4xl font-black italic tracking-tighter flex items-center gap-3">
+                    <Icon name="layers" className="text-purple-400" size={32} /> MASHUP CORE
+                  </h2>
+                  <span className="text-[10px] font-black text-slate-500 tracking-[0.5em] uppercase mt-2">Harmonic Logic Controller</span>
+                </div>
+
+                <div className="flex flex-wrap justify-center gap-6 bg-black/60 p-3 rounded-[2rem] border border-white/5 shadow-inner">
+                  <div className="flex flex-col items-center border-r border-white/10 px-6">
+                    <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-2">MASTER BPM</label>
+                    <div className="flex items-center gap-4">
+                      <button onClick={() => setMasterBpm(masterBpm - 1)} className="text-white/40 hover:text-white transition-colors p-1">-</button>
+                      <span className="text-3xl font-mono font-black text-white w-14 text-center">{masterBpm}</span>
+                      <button onClick={() => setMasterBpm(masterBpm + 1)} className="text-white/40 hover:text-white transition-colors p-1">+</button>
+                    </div>
+                  </div>
+                  <div className="flex flex-col items-center border-r border-white/10 px-6">
+                    <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-2">MASTER KEY</label>
+                    <select
+                      value={masterKey}
+                      onChange={(e) => setMasterKey(e.target.value)}
+                      className="bg-transparent text-3xl font-mono font-black text-blue-400 focus:outline-none cursor-pointer text-center w-16 hover:text-blue-300 transition-colors"
+                    >
+                      {KEYS.map(k => <option key={k} value={k} className="bg-slate-900">{k}</option>)}
+                    </select>
+                  </div>
+                  <div className="flex flex-col items-center px-6 justify-center gap-3">
+                     <button
+                      onClick={() => setSyncEnabled(!syncEnabled)}
+                      className={`px-6 py-2 rounded-full text-[10px] font-black uppercase tracking-widest transition-all ${syncEnabled ? 'bg-green-500 text-white shadow-lg shadow-green-500/30' : 'bg-white/5 text-slate-500 hover:text-slate-300'}`}
+                     >
+                       {syncEnabled ? 'SYNC ON' : 'SYNC OFF'}
+                     </button>
+                     <button
+                      onClick={() => setAutoDjMode(!autoDjMode)}
+                      className={`px-6 py-2 rounded-full text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${autoDjMode ? 'bg-purple-600 text-white shadow-lg shadow-purple-500/30' : 'bg-white/5 text-slate-500 hover:text-slate-300'}`}
+                     >
+                       <Icon name="refresh" size={12} /> AUTO DJ
+                     </button>
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-16 items-center">
+                <div className="space-y-4">
+                  <div className="flex justify-between items-center px-1">
+                     <div className="text-[10px] font-black text-blue-400 uppercase tracking-widest">DECK A EQ</div>
+                     <div className="h-1 flex-1 mx-4 bg-blue-500/10 rounded-full" />
+                  </div>
+                  <div className="flex gap-3">
+                    <EQBtn label="Bass" active={deckAConfig.low} onClick={() => togglePart('A', 'low')} color="blue" />
+                    <EQBtn label="Mid" active={deckAConfig.mid} onClick={() => togglePart('A', 'mid')} color="blue" />
+                    <EQBtn label="High" active={deckAConfig.high} onClick={() => togglePart('A', 'high')} color="blue" />
+                  </div>
+                </div>
+
+                <div className="flex flex-col items-center gap-10">
+                  <button
+                    onClick={onPlayMashup}
+                    className={`group w-full py-8 rounded-3xl font-black text-2xl shadow-2xl transition-all transform active:scale-95 flex items-center justify-center gap-4 ${
+                      isPlaying
+                        ? 'bg-purple-600 hover:bg-purple-700 text-white shadow-purple-500/40'
+                        : 'bg-gradient-to-br from-blue-600 via-indigo-600 to-pink-600 hover:from-blue-500 hover:to-pink-500 text-white shadow-blue-500/20'
+                    }`}
+                  >
+                    <div className="bg-white/20 p-2 rounded-full group-hover:scale-110 transition-transform">
+                       <Icon name={isPlaying ? "pause" : "play"} size={28} />
+                    </div>
+                    {isPlaying ? "STOP MIX" : "START MIX"}
+                  </button>
+
+                  <div className="w-full space-y-4">
+                     <div className="flex justify-between text-[11px] font-black text-slate-500 uppercase tracking-[0.3em] px-2">
+                        <span className={crossfade < 0.3 ? 'text-blue-400' : 'transition-colors'}>DECK A</span>
+                        <span className={crossfade > 0.7 ? 'text-pink-400' : 'transition-colors'}>DECK B</span>
+                     </div>
+                     <div className="relative h-14 bg-black/60 rounded-[1.5rem] border-2 border-white/5 flex items-center px-4 shadow-inner">
+                       <input
+                        type="range" min="0" max="1" step="0.001"
+                        value={crossfade}
+                        onChange={(e) => setCrossfade(parseFloat(e.target.value))}
+                        className="w-full appearance-none bg-transparent cursor-pointer relative z-10 h-full"
+                       />
+                       <div className="absolute inset-0 flex items-center justify-center pointer-events-none opacity-20">
+                          <div className="w-0.5 h-6 bg-white/50" />
+                       </div>
+                       <div className="absolute inset-y-2 left-2 rounded-l-xl transition-all duration-75 pointer-events-none bg-blue-500/10" style={{ width: `calc(${(1 - crossfade) * 100}% - 8px)` }} />
+                       <div className="absolute inset-y-2 right-2 rounded-r-xl transition-all duration-75 pointer-events-none bg-pink-500/10" style={{ width: `calc(${crossfade * 100}% - 8px)` }} />
+                     </div>
+                  </div>
+                </div>
+
+                <div className="space-y-4">
+                  <div className="flex justify-between items-center px-1">
+                     <div className="h-1 flex-1 mx-4 bg-pink-500/10 rounded-full" />
+                     <div className="text-[10px] font-black text-pink-400 uppercase tracking-widest">DECK B EQ</div>
+                  </div>
+                  <div className="flex gap-3">
+                    <EQBtn label="Bass" active={deckBConfig.low} onClick={() => togglePart('B', 'low')} color="pink" />
+                    <EQBtn label="Mid" active={deckBConfig.mid} onClick={() => togglePart('B', 'mid')} color="pink" />
+                    <EQBtn label="High" active={deckBConfig.high} onClick={() => togglePart('B', 'high')} color="pink" />
+                  </div>
+                </div>
+              </div>
+            </div>
+          );
+        };
+
+        // --- SearchPanel ---
+        const MOODS = [
+          { label: '🔥 Peak Time', query: 'Top Charts Techno House' },
+          { label: '🌅 Sunset Mix', query: 'Melodic Deep House chill' },
+          { label: '🌫️ Chill Vibe', query: 'Lo-fi beats ambient' },
+          { label: '⚡ Energy Boost', query: 'High Energy Pop Dance' },
+          { label: '🚇 Underground', query: 'Minimal Techno Tech House' }
         ];
 
-        const handleGenerateNames = async () => {
-            if (!trackA || !trackB) return alert("Please load both tracks first!");
+        const SearchPanel = ({ onLoadTrack }) => {
+          const [query, setQuery] = useState('');
+          const [results, setResults] = useState([]);
+          const [loading, setLoading] = useState(false);
+
+          const handleSearch = async (searchQuery) => {
+            if (!searchQuery) return;
+            setLoading(true);
+            try {
+              const response = await fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(searchQuery)}&entity=song&limit=8`);
+              const data = await response.json();
+              const tracks = data.results.map((r) => ({
+                id: r.trackId,
+                name: r.trackName,
+                artist: r.artistName,
+                image: r.artworkUrl100,
+                url: r.previewUrl,
+                type: 'preview',
+                trackName: r.trackName,
+                artistName: r.artistName
+              }));
+              setResults(tracks);
+            } catch (err) {
+              console.error(err);
+            } finally {
+              setLoading(false);
+            }
+          };
+
+          const onFormSubmit = (e) => {
+            e.preventDefault();
+            handleSearch(query);
+          };
+
+          return (
+            <div className="w-full bg-slate-900/60 backdrop-blur-2xl rounded-[2rem] border border-white/10 p-8 mb-12 shadow-2xl">
+              <div className="flex flex-col md:flex-row gap-8 items-start mb-8">
+                <div className="flex-1 w-full">
+                  <form onSubmit={onFormSubmit} className="flex gap-3 mb-6">
+                    <div className="relative flex-1">
+                      <input
+                        type="text"
+                        placeholder="Find tracks, artists, or vibes..."
+                        className="w-full bg-black/60 border border-white/10 rounded-2xl px-5 py-4 text-sm text-white focus:outline-none focus:border-blue-500/50 transition-all pl-12 shadow-inner"
+                        value={query}
+                        onChange={(e) => setQuery(e.target.value)}
+                      />
+                      <div className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500">
+                        <Icon name="search" size={20} />
+                      </div>
+                    </div>
+                    <button
+                      type="submit"
+                      disabled={loading}
+                      className="bg-blue-600 hover:bg-blue-500 px-10 rounded-2xl font-black text-[10px] tracking-widest transition-all shadow-lg hover:shadow-blue-500/30 disabled:opacity-30"
+                    >
+                      {loading ? "SEARCHING..." : "FIND AUDIO"}
+                    </button>
+                  </form>
+
+                  <div className="flex flex-wrap gap-2">
+                    {MOODS.map((mood) => (
+                      <button
+                        key={mood.label}
+                        onClick={() => { setQuery(mood.query); handleSearch(mood.query); }}
+                        className="bg-white/5 hover:bg-white/10 border border-white/5 rounded-full px-4 py-1.5 text-[9px] font-black uppercase tracking-wider text-slate-400 hover:text-white transition-all"
+                      >
+                        {mood.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+                {results.map(track => (
+                  <div key={track.id} className="group bg-black/40 border border-white/5 p-4 rounded-2xl hover:border-blue-500/30 hover:bg-black/60 transition-all shadow-lg">
+                    <div className="flex items-center gap-4 mb-4">
+                      <div className="relative shrink-0">
+                        <img src={track.image || ''} alt="" className="w-14 h-14 rounded-xl object-cover bg-slate-800 shadow-md" />
+                        <div className="absolute inset-0 bg-blue-500/10 rounded-xl opacity-0 group-hover:opacity-100 transition-opacity" />
+                      </div>
+                      <div className="min-w-0">
+                        <div className="font-bold text-sm truncate group-hover:text-blue-400 transition-colors">{track.name}</div>
+                        <div className="text-[10px] text-slate-500 font-bold uppercase tracking-tight truncate">{track.artist}</div>
+                      </div>
+                    </div>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => onLoadTrack('A', track)}
+                        className="flex-1 bg-blue-500/10 hover:bg-blue-500 text-blue-400 hover:text-white py-2 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all"
+                      >
+                        LOAD A
+                      </button>
+                      <button
+                        onClick={() => onLoadTrack('B', track)}
+                        className="flex-1 bg-pink-500/10 hover:bg-pink-500 text-pink-400 hover:text-white py-2 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all"
+                      >
+                        LOAD B
+                      </button>
+                    </div>
+                  </div>
+                ))}
+                {results.length === 0 && !loading && (
+                  <div className="col-span-full py-12 text-center border-2 border-dashed border-white/5 rounded-2xl text-slate-600 font-bold uppercase tracking-[0.3em] text-[10px]">
+                    Enter a search or select a mood above to populate the library
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        };
+
+        // --- AIFeatures ---
+        const AIFeatures = ({ trackA, trackB, isPlaying }) => {
+          const [names, setNames] = useState([]);
+          const [loadingNames, setLoadingNames] = useState(false);
+          const [loadingIntro, setLoadingIntro] = useState(false);
+          const [isPlayingIntro, setIsPlayingIntro] = useState(false);
+          const [selectedVoice, setSelectedVoice] = useState(AI_VOICES[0].id);
+          const [assistantTip, setAssistantTip] = useState("Load tracks to start your AI-powered performance!");
+          const [loadingTip, setLoadingTip] = useState(false);
+
+          useEffect(() => {
+            const updateTip = async () => {
+              setLoadingTip(true);
+              try {
+                  const tip = await getAssistantTip({
+                    deckA: trackA?.name || null,
+                    deckB: trackB?.name || null,
+                    isPlaying,
+                    crossfade: audioEngine.crossFade.fade.value
+                  });
+                  setAssistantTip(tip);
+              } catch(e) {
+                  // Silent fail
+              }
+              setLoadingTip(false);
+            };
+
+            const timer = setTimeout(updateTip, 2000);
+            return () => clearTimeout(timer);
+          }, [trackA, trackB, isPlaying]);
+
+          const handleGenNames = async () => {
+            if (!trackA || !trackB) return;
             setLoadingNames(true);
             try {
-                const names = await generateSmartName(trackA, trackB);
-                setGeneratedNames(names);
+                const result = await generateMashupNames(trackA.name, trackB.name);
+                setNames(result);
+            } catch(e) {
+                // Don't log if it's the known "Missing Key" issue to avoid console spam
+                if(!e.message?.includes('Missing API Key')) console.error(e);
+            }
+            setLoadingNames(false);
+          };
+
+          const handleDJHost = async () => {
+            if (!trackA || !trackB) return;
+            setLoadingIntro(true);
+            try {
+                await generateDJIntro(trackA.name, trackB.name, selectedVoice);
+            } catch(e) {}
+            setLoadingIntro(false);
+          };
+
+          return (
+            <div className="w-full flex flex-col gap-6 mb-10">
+              {/* Assistant Ribbon */}
+              <div className="bg-gradient-to-r from-blue-600/20 via-purple-600/20 to-pink-600/20 backdrop-blur-xl border border-white/10 p-4 rounded-2xl flex items-center justify-between shadow-lg">
+                <div className="flex items-center gap-4">
+                  <div className="w-10 h-10 rounded-full bg-blue-500/20 flex items-center justify-center animate-pulse">
+                    <Icon name="sparkles" className="text-blue-400" size={20} />
+                  </div>
+                  <div>
+                    <p className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em]">Live AI Assistant</p>
+                    <p className={`text-sm font-bold tracking-tight transition-opacity duration-500 ${loadingTip ? 'opacity-40' : 'opacity-100'}`}>
+                      {assistantTip}
+                    </p>
+                  </div>
+                </div>
+                <div className="text-[9px] font-black bg-white/5 px-3 py-1 rounded-full text-slate-400 flex items-center gap-2">
+                  <span className="w-1.5 h-1.5 rounded-full bg-green-500"></span>
+                  AI AGENT READY
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                {/* Namer */}
+                <div className="bg-slate-900/60 backdrop-blur-xl p-6 rounded-3xl border border-white/10 flex flex-col justify-between group">
+                  <div>
+                    <h3 className="text-blue-400 font-black text-[10px] uppercase tracking-[0.3em] flex items-center gap-2 mb-6">
+                      <Icon name="music" size={14} /> Mix Identification
+                    </h3>
+                    <div className="min-h-[60px] flex flex-col justify-center">
+                      {names.length > 0 ? (
+                        <div className="grid grid-cols-1 gap-2">
+                          {names.map((n, i) => (
+                            <div key={i} className="bg-white/5 border border-white/5 px-4 py-2 rounded-xl text-xs font-bold hover:bg-white/10 transition-colors">
+                              {n}
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-xs text-slate-500 leading-relaxed italic">
+                          Generate a professional DJ name for your current track combination.
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                  <button
+                    onClick={handleGenNames}
+                    disabled={loadingNames || !trackA || !trackB}
+                    className="mt-8 w-full py-3 bg-blue-600 hover:bg-blue-500 disabled:bg-blue-600/10 disabled:text-blue-400/50 text-white rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all shadow-lg hover:shadow-blue-500/30"
+                  >
+                    {loadingNames ? "ANALYZING ACOUSTICS..." : "GENERATE MASHUP NAMES"}
+                  </button>
+                </div>
+
+                {/* DJ Host */}
+                <div className="bg-slate-900/60 backdrop-blur-xl p-6 rounded-3xl border border-white/10 flex flex-col justify-between">
+                  <div>
+                    <div className="flex justify-between items-center mb-6">
+                      <h3 className="text-pink-400 font-black text-[10px] uppercase tracking-[0.3em] flex items-center gap-2">
+                        <Icon name="mic" size={14} /> AI Commentary
+                      </h3>
+                      <select
+                        value={selectedVoice}
+                        onChange={(e) => setSelectedVoice(e.target.value)}
+                        className="bg-black/40 border border-white/10 rounded-xl text-[10px] font-black text-white px-3 py-1.5 focus:outline-none hover:border-white/30 transition-colors"
+                      >
+                        {AI_VOICES.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
+                      </select>
+                    </div>
+                    <div className="min-h-[60px] flex flex-col justify-center">
+                      <p className="text-xs text-slate-500 leading-relaxed italic">
+                        {isPlayingIntro ? "🎙️ DJ Host is live on the air..." : "AI creates a bespoke high-energy voiceover intro for your performance."}
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={handleDJHost}
+                    disabled={loadingIntro || isPlayingIntro || !trackA || !trackB}
+                    className={`mt-8 w-full py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-2 ${
+                      isPlayingIntro
+                        ? 'bg-pink-500 text-white shadow-lg shadow-pink-500/40 animate-pulse'
+                        : 'bg-pink-600 hover:bg-pink-500 disabled:bg-pink-600/10 disabled:text-pink-400/50 text-white'
+                    }`}
+                  >
+                    {loadingIntro ? "SYNTHESIZING HYPE..." : (isPlayingIntro ? "BROADCASTING" : "GENERATE STAGE INTRO (TEXT ONLY)")}
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+        };
+
+        // -----------------------------------------------------------------------------
+        // MAIN APP
+        // -----------------------------------------------------------------------------
+
+        const VIBE_OPTIONS = [
+          { label: 'TOP HITS', query: 'Top 40 Pop Hits' },
+          { label: 'TECHNO', query: 'Dark Underground Techno' },
+          { label: 'HOUSE', query: 'Classic Soulful House' },
+          { label: 'LO-FI', query: 'Chill Lo-fi Hip Hop beats' },
+          { label: 'DISCO', query: 'Nu-Disco Funk' },
+          { label: 'HIP HOP', query: '90s Boom Bap Hip Hop' },
+          { label: 'AMBIENT', query: 'Ambient Cinematic Soundscapes' },
+          { label: 'ROCK', query: 'Classic Rock Anthems' },
+          { label: 'JAZZ', query: 'Smooth Contemporary Jazz' }
+        ];
+
+        const App = () => {
+          const [trackA, setTrackA] = useState(null);
+          const [trackB, setTrackB] = useState(null);
+          const [masterBpm, setMasterBpm] = useState(128);
+          const [masterKey, setMasterKey] = useState('C');
+          const [syncEnabled, setSyncEnabled] = useState(true);
+          const [isPlayingMashup, setIsPlayingMashup] = useState(false);
+          const [vizMode, setVizMode] = useState(VisualizerMode.BARS);
+          const [uiVisible, setUiVisible] = useState(true);
+          const [autoDjMode, setAutoDjMode] = useState(false);
+          const [audioStarted, setAudioStarted] = useState(false);
+          const [aiPanelOpen, setAiPanelOpen] = useState(false);
+          const [aiInput, setAiInput] = useState('');
+          const [aiResponse, setAiResponse] = useState('JD System Dormant. Awaiting authorization.');
+          const [isJDActive, setIsJDActive] = useState(false);
+          const [crossfade, setCrossfade] = useState(0.5);
+          const [aiHistory, setAiHistory] = useState([]);
+          const [isJDSpeaking, setIsJDSpeaking] = useState(false);
+          const [vibeMood, setVibeMood] = useState(VIBE_OPTIONS[0].query);
+          const [keyModalOpen, setKeyModalOpen] = useState(false);
+
+          const deckARef = useRef(null);
+          const deckBRef = useRef(null);
+          const isInteracting = useRef(false);
+          const currentActiveDeck = useRef('A');
+          const vibeTimerRef = useRef(null);
+          const nextTrackTimerRef = useRef(null);
+
+          const handleBpmReport = useCallback((bpm) => {
+            if (!trackA && !trackB) setMasterBpm(bpm);
+          }, [trackA, trackB]);
+
+          const initAudio = async () => {
+            try {
+              await Tone.start();
+              await audioEngine.start();
+              setAudioStarted(true);
+              setAiPanelOpen(true);
             } catch (e) {
-                setGeneratedNames(["Mix 1", "Mix 2", "Mashup"]);
-            } finally {
-                setLoadingNames(false);
+              console.error("Audio Context Failed", e);
             }
-        };
+          };
 
-        const handleAIDJ = async () => {
-            if (!trackA || !trackB) return alert("Please load both tracks first!");
-            setDjLoading(true);
+          const activateJD = async () => {
+            if (!audioStarted) await initAudio();
+            setIsJDActive(true);
+            const welcome = "JD is on the air. Systems are nominal. Monitoring spectral density and vibe levels.";
+            setAiResponse(welcome);
+          };
+
+          const deactivateJD = () => {
+            setIsJDActive(false);
+            setAiResponse("JD System Dormant. Awaiting authorization.");
+          };
+
+          const handleMagicMatch = async (sourceDeckId) => {
+            const sourceTrack = sourceDeckId === 'A' ? trackA : trackB;
+            const targetDeckId = sourceDeckId === 'A' ? 'B' : 'A';
+
             try {
-                // Step A: Generate Script
-                const prompt = `You are a high-energy radio DJ introducing a mashup. The tracks are '${trackA.trackName}' by ${trackA.artistName} and '${trackB.trackName}' by ${trackB.artistName}'. Write a 1-sentence hype intro. Do not use quotes.`;
-                let script = await askLLM(prompt);
-                if (!script) script = `Get ready for ${trackA.trackName} mixed with ${trackB.trackName}!`;
+              let matchQuery = "";
+              if (sourceTrack) {
+                matchQuery = await generateMagicMatch(
+                  sourceTrack.name,
+                  sourceTrack.artist,
+                  masterKey,
+                  masterBpm,
+                  targetDeckId,
+                  vibeMood
+                );
+              } else {
+                matchQuery = vibeMood;
+              }
 
-                // Step B: Define Style Prompts
-                let stylePrefix = "Say excitedly:";
-                if (selectedVoice === "Fenrir" || selectedVoice === "Charon") {
-                    stylePrefix = "Say in a deep, gravelly, resonant, movie trailer narrator voice:";
-                } else if (selectedVoice === "Aoede" || selectedVoice === "Kore") {
-                    stylePrefix = "Say in a bright, energetic, cheerful young woman's voice:";
-                } else if (selectedVoice === "Puck") {
-                    stylePrefix = "Say in a hyper-energetic, loud, radio DJ host voice:";
-                }
+              const searchRes = await fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(matchQuery)}&entity=song&limit=5`);
+              const data = await searchRes.json();
 
-                const ttsPrompt = `${stylePrefix} ${script}`;
+              if (data.results?.length > 0) {
+                const rIdx = Math.floor(Math.random() * data.results.length);
+                const r = data.results[rIdx];
+                const track = {
+                  id: r.trackId,
+                  name: r.trackName,
+                  artist: r.artistName,
+                  image: r.artworkUrl100,
+                  url: r.previewUrl,
+                  type: 'preview',
+                  trackName: r.trackName,
+                  artistName: r.artistName
+                };
 
-                // Step C: Generate Audio
-                // If using Gemini, ttsPrompt is useful. If using fallback (TikTok), we just pass the script.
-                // We'll pass both and let generateSpeech decide or just pass script if fallback.
-                // Actually, for TikTok/Google, the prefix "Say excitedly:" might be read aloud.
-                // We should clean it for fallback.
-
-                // Strategy: Pass the raw script to generateSpeech, but if Gemini is active, it handles style via system prompt?
-                // No, Gemini TTS text field is just text. The Prompt user provided puts style prefix IN the text.
-                // So we will pass `ttsPrompt` to `generateSpeech`.
-                // However, for Fallbacks (TikTok), we must strip the prefix.
-
-                const audioUrl = await generateSpeech(GEMINI_API_KEY ? ttsPrompt : script, selectedVoice);
-
-                if (audioUrl) {
-                    if (djPlayerRef.current) djPlayerRef.current.dispose();
-
-                    const player = new Tone.Player({
-                        url: audioUrl,
-                        autostart: true,
-                        onload: () => { setDjPlaying(true); setDjLoading(false); },
-                        onstop: () => setDjPlaying(false),
-                        onerror: () => { setDjLoading(false); alert("Error playing DJ audio."); }
-                    });
-
-                    // Route to Master!
-                    if (window.masterCompressor) player.connect(window.masterCompressor);
-                    else player.toDestination();
-
-                    djPlayerRef.current = player;
-                } else { throw new Error("Speech gen failed"); }
-            } catch (e) { console.error(e); setDjLoading(false); alert("AI DJ Unavailable."); }
-        };
-
-        return (
-            <div className="w-full max-w-4xl mb-6 grid grid-cols-1 md:grid-cols-2 gap-4 relative z-10">
-                <div className="bg-slate-900/30 backdrop-blur-md p-4 rounded-xl border border-purple-500/30 flex flex-col justify-between">
-                    <div><h3 className="text-purple-300 font-bold flex items-center gap-2 text-sm uppercase tracking-wider mb-2"><Icon name="sparkles" size={14} /> Smart Namer</h3>{loadingNames ? <div className="text-xs text-gray-400 animate-pulse">Consulting spirits...</div> : (generatedNames.length > 0 ? <ul className="space-y-1">{generatedNames.map((n,i) => <li key={i} className="text-sm font-bold text-white bg-slate-700/50 px-2 py-1 rounded">{n}</li>)}</ul> : <p className="text-xs text-gray-500">Need a name? Click Generate.</p>)}</div>
-                    <button onClick={handleGenerateNames} disabled={loadingNames} className="mt-3 w-full bg-slate-700/50 hover:bg-slate-600/50 text-xs font-bold py-2 rounded transition flex items-center justify-center gap-2">✨ GENERATE NAMES</button>
-                </div>
-                <div className="bg-slate-900/30 backdrop-blur-md p-4 rounded-xl border border-blue-500/30 flex flex-col justify-between">
-                    <div>
-                        <div className="flex justify-between items-center mb-2">
-                            <h3 className="text-blue-300 font-bold flex items-center gap-2 text-sm uppercase tracking-wider"><Icon name="mic" size={14} /> AI DJ Host</h3>
-                            <select value={selectedVoice} onChange={(e) => setSelectedVoice(e.target.value)} className="bg-slate-900 border border-slate-700 text-[10px] rounded px-1 max-w-[120px] text-white">
-                                {aiVoices.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
-                            </select>
-                        </div>
-                        <p className="text-xs text-gray-500">{djLoading ? "Generating script..." : (djPlaying ? "Broadcasting live..." : "Generate a custom hype intro.")}</p>
-                    </div>
-                    <button onClick={handleAIDJ} disabled={djLoading || djPlaying} className={`mt-3 w-full text-xs font-bold py-2 rounded transition flex items-center justify-center gap-2 ${djPlaying ? 'bg-red-500/20 text-red-400 border border-red-500 animate-pulse' : 'bg-slate-700/50 hover:bg-slate-600/50'}`}>{djLoading ? <div className="loader w-3 h-3"></div> : (djPlaying ? "🎙️ ON AIR" : "✨ HYPE INTRO")}</button>
-                </div>
-            </div>
-        );
-    };
-
-    const SearchPanel = ({ onLoadTrack }) => {
-        // ... (unchanged)
-        const [query, setQuery] = useState("");
-        const [results, setResults] = useState([]);
-        const [loading, setLoading] = useState(false);
-        const [source, setSource] = useState('itunes');
-
-        const handleSearch = async (e) => {
-            e.preventDefault();
-            if(!query) return;
-            setLoading(true);
-            setResults([]);
-            try {
-                if (source === 'itunes') {
-                    const response = await fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(query)}&entity=song&limit=6`);
-                    const data = await response.json();
-                    setResults(data.results.map(r => ({ id: r.trackId, name: r.trackName, artist: r.artistName, image: r.artworkUrl100, url: r.previewUrl, type: 'preview' })));
-                } else {
-                    const tracks = await searchAudius(query);
-                    setResults(tracks);
-                }
-            } catch (err) { console.error(err); } finally { setLoading(false); }
-        };
-
-        return (
-            <div className="bg-slate-900/30 backdrop-blur-md p-4 rounded-xl border border-slate-700/50 w-full mb-6 relative z-10">
-                <div className="flex gap-4 mb-4 border-b border-slate-700/50 pb-2">
-                    <button onClick={() => setSource('itunes')} className={`text-sm font-bold pb-2 transition-all ${source==='itunes' ? 'text-white border-b-2 border-blue-500' : 'text-gray-500 hover:text-gray-300'}`}>Mainstream (Previews)</button>
-                    <button onClick={() => setSource('audius')} className={`text-sm font-bold pb-2 transition-all ${source==='audius' ? 'text-white border-b-2 border-purple-500' : 'text-gray-500 hover:text-gray-300'}`}>Indie / Audius (Full Songs)</button>
-                </div>
-                <form onSubmit={handleSearch} className="flex gap-2 mb-4">
-                    <input type="text" placeholder={source === 'itunes' ? "Search Taylor Swift..." : "Search Indie Artists..."} className="flex-1 bg-slate-900/50 border border-slate-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-blue-500" value={query} onChange={e => setQuery(e.target.value)} />
-                    <button type="submit" className="bg-blue-600 hover:bg-blue-500 px-6 py-2 rounded-lg font-bold flex items-center gap-2 transition">{loading ? <div className="loader"></div> : <Icon name="search" size={18} />}</button>
-                </form>
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                    {results.map(track => (
-                        <div key={track.id} className="bg-slate-900/30 backdrop-blur-sm p-3 rounded-lg border border-slate-800/50 flex flex-col gap-2 hover:border-slate-600 transition group relative">
-                            <div className="flex items-center gap-3">
-                                <div className="relative flex-shrink-0"><img src={track.image || "https://placehold.co/100x100/1e293b/white?text=No+Art"} alt="art" className="w-12 h-12 rounded bg-slate-800 object-cover" /><div className={`absolute -bottom-2 -right-2 text-[8px] font-bold px-1 rounded shadow-sm ${track.type === 'preview' ? 'bg-yellow-500 text-black' : 'bg-purple-500 text-white'}`}>{track.type === 'preview' ? 'PREVIEW' : 'FULL'}</div></div>
-                                <div className="flex-1 min-w-0"><div className="font-bold text-sm truncate text-white group-hover:text-blue-400 transition">{track.name}</div><div className="text-xs text-gray-400 truncate">{track.artist}</div></div>
-                            </div>
-                            <div className="flex gap-2 mt-1">
-                                <button onClick={() => onLoadTrack('A', { ...track, trackName: track.name, artistName: track.artist })} className="flex-1 text-[10px] bg-blue-500/20 text-blue-300 hover:bg-blue-500 hover:text-white px-2 py-1 rounded transition text-center">Load A</button>
-                                <button onClick={() => onLoadTrack('B', { ...track, trackName: track.name, artistName: track.artist })} className="flex-1 text-[10px] bg-pink-500/20 text-pink-300 hover:bg-pink-500 hover:text-white px-2 py-1 rounded transition text-center">Load B</button>
-                            </div>
-                        </div>
-                    ))}
-                </div>
-            </div>
-        );
-    };
-
-    const Deck = forwardRef(({ id, trackData, masterBpm, masterKey, isMasterSyncEnabled, onCompliment, onReportBpm }, ref) => {
-        const [player, setPlayer] = useState(null);
-        const [loaded, setLoaded] = useState(false);
-        const [isPlaying, setIsPlaying] = useState(false);
-        const [loadingAudio, setLoadingAudio] = useState(false);
-        const [duration, setDuration] = useState(0);
-        const [originalBpm, setOriginalBpm] = useState(120);
-        const [originalKey, setOriginalKey] = useState("C");
-
-        const [playbackRate, setPlaybackRate] = useState(1);
-        const [pitchShift, setPitchShift] = useState(0);
-        const [currentTime, setCurrentTime] = useState(0);
-        const [stemMode, setStemMode] = useState('original');
-        const [vocalFx, setVocalFx] = useState("off");
-        const [findingMatch, setFindingMatch] = useState(false);
-        const [analyzing, setAnalyzing] = useState(false);
-        const [activeLoop, setActiveLoop] = useState(null);
-
-        const [cueTime, setCueTime] = useState(0);
-        const [pausedTime, setPausedTime] = useState(0);
-
-        const midSideSplit = useRef(null);
-        const midSideMerge = useRef(null);
-        const midGain = useRef(null);
-        const sideGain = useRef(null);
-        const midFilter = useRef(null);
-
-        // FX Nodes
-        const _eqNode = useRef(null);
-        const _pitchShiftNode = useRef(null);
-        const _voxPitch = useRef(null);
-        const _voxDist = useRef(null);
-        const _voxCheby = useRef(null);
-        const _voxReverb = useRef(null);
-        const _voxChorus = useRef(null);
-        const _voxBit = useRef(null);
-
-        const canvasRef = useRef(null);
-        const playheadRef = useRef(null);
-        const startTimeRef = useRef(0);
-        const rafRef = useRef(null);
-
-        useImperativeHandle(ref, () => ({
-            play: async () => { if(player && loaded) { await initMaster(); if (player.state !== "started") { const startOffset = cueTime; player.start(Tone.now(), startOffset); startTimeRef.current = Tone.now() - (startOffset / playbackRate); setIsPlaying(true); } } },
-            stop: () => { if(player) { player.stop(); setIsPlaying(false); setCurrentTime(cueTime); setPausedTime(cueTime); } },
-            isPlaying: () => isPlaying,
-            jumpTo: (time) => { if(player && loaded) player.seek(time); },
-            setEQ: (low, mid, high) => { if(_eqNode.current) { _eqNode.current.low.rampTo(low, 0.1); _eqNode.current.mid.rampTo(mid, 0.1); _eqNode.current.high.rampTo(high, 0.1); } },
-            getCuePoints: () => ({ verse: 0, chorus: 0 }),
-            getDuration: () => duration
-        }));
-
-        // Vocal FX Logic (Mock AI Formant Shifting & Style Transfer)
-        useEffect(() => {
-            if (!_voxPitch.current) return;
-
-            // 1. Reset All Effects
-            _voxPitch.current.pitch = 0;
-            _voxDist.current.wet.value = 0;
-            _voxDist.current.distortion = 0;
-            _voxCheby.current.wet.value = 0;
-            _voxReverb.current.wet.value = 0;
-            _voxChorus.current.wet.value = 0;
-            _voxBit.current.wet.value = 0;
-
-            midFilter.current.type = "lowpass";
-            midFilter.current.frequency.value = 20000;
-            midFilter.current.Q.value = 1;
-            midFilter.current.gain.value = 0;
-
-            // 2. Apply Presets (Tuned for Maximum "AI" Feel)
-            if (vocalFx === "pop") {
-                // Pop Diva: Pitch +3, Brightness, Reverb, Chorus (Thickener)
-                _voxPitch.current.pitch = 3;
-                midFilter.current.type = "highshelf";
-                midFilter.current.frequency.value = 3000;
-                midFilter.current.gain.value = 10;
-                _voxReverb.current.wet.value = 0.3;
-                _voxChorus.current.wet.value = 0.4;
-            } else if (vocalFx === "trap") {
-                // Trap God: Pitch -2, Distortion, Heavy Reverb, Lowpass
-                _voxPitch.current.pitch = -2;
-                midFilter.current.type = "lowpass";
-                midFilter.current.frequency.value = 2500;
-                _voxDist.current.distortion = 0.6;
-                _voxDist.current.wet.value = 0.2;
-                _voxReverb.current.wet.value = 0.5;
-            } else if (vocalFx === "hyper") {
-                // Hyperpop: Octave up, Bitcrush, Formant Peak
-                _voxPitch.current.pitch = 12;
-                _voxBit.current.bits = 4;
-                _voxBit.current.wet.value = 0.4;
-                midFilter.current.type = "peaking";
-                midFilter.current.frequency.value = 2000;
-                midFilter.current.Q.value = 3;
-                midFilter.current.gain.value = 10;
-                _voxCheby.current.order = 20;
-                _voxCheby.current.wet.value = 0.2;
-            } else if (vocalFx === "lofi") {
-                // Lo-Fi: Bandpass, Detune, Bitcrush
-                midFilter.current.type = "bandpass";
-                midFilter.current.frequency.value = 1000;
-                midFilter.current.Q.value = 1.0;
-                _voxPitch.current.pitch = -0.5;
-                _voxBit.current.bits = 8;
-                _voxBit.current.wet.value = 1;
-                _voxDist.current.distortion = 0.1;
-                _voxDist.current.wet.value = 0.1;
-            } else if (vocalFx === "dua") {
-                // Deep Alto: Pitch -2, Formant Boost 800Hz
-                _voxPitch.current.pitch = -2;
-                midFilter.current.type = "peaking";
-                midFilter.current.frequency.value = 800;
-                midFilter.current.Q.value = 2;
-                midFilter.current.gain.value = 8;
-                _voxChorus.current.wet.value = 0.3;
-            } else if (vocalFx === "weekend") {
-                // Falsetto: Pitch +4, Highpass 300Hz, Reverb
-                _voxPitch.current.pitch = 4;
-                midFilter.current.type = "highpass";
-                midFilter.current.frequency.value = 300;
-                _voxReverb.current.wet.value = 0.4;
-            } else if (vocalFx === "robot") {
-                // Daft Punk: Cheby (Square wave approx), Fixed Sub Pitch
-                _voxCheby.current.order = 50;
-                _voxCheby.current.wet.value = 1.0;
-                _voxPitch.current.pitch = -12;
-                _voxBit.current.bits = 6;
-                _voxBit.current.wet.value = 0.5;
+                if (targetDeckId === 'A') setTrackA(track);
+                else setTrackB(track);
+                return track;
+              }
+            } catch (err) {
+              // Handle missing API key by opening modal
+              if(err.message && err.message.includes("Missing API Key")) {
+                  console.warn("API Key Missing during Magic Match. Stopping Auto DJ.");
+                  setAutoDjMode(false);
+                  setKeyModalOpen(true);
+                  // Clear intervals to stop the loop immediately
+                  if (vibeTimerRef.current) clearInterval(vibeTimerRef.current);
+                  if (nextTrackTimerRef.current) clearTimeout(nextTrackTimerRef.current);
+                  return null;
+              }
+              console.error("Magic Mix Failed:", err);
             }
-        }, [vocalFx]);
+            return null;
+          };
 
-        useEffect(() => {
-            if (midGain.current && sideGain.current && midFilter.current) {
-                const rampTime = 0.1;
-                if (stemMode === 'original') { midGain.current.gain.rampTo(1, rampTime); sideGain.current.gain.rampTo(1, rampTime); }
-                else if (stemMode === 'vocal') { midGain.current.gain.rampTo(1, rampTime); sideGain.current.gain.rampTo(0, rampTime); midFilter.current.type = "highpass"; midFilter.current.frequency.rampTo(350, rampTime); }
-                else if (stemMode === 'instrumental') { midGain.current.gain.rampTo(1, rampTime); sideGain.current.gain.rampTo(1, rampTime); midFilter.current.type = "lowpass"; midFilter.current.frequency.rampTo(250, rampTime); }
-            }
-        }, [stemMode]);
+          const prepareNextVibeTrack = async () => {
+            const sourceDeck = currentActiveDeck.current;
+            await handleMagicMatch(sourceDeck);
+          };
 
-        // Helper to fetch metadata
-        const analyzeMetadata = async (title, artist) => {
-            setAnalyzing(true);
-            try {
-                // Deterministic Fallback using hashing
-                const detBpm = getDeterministicNumber(title + artist, 90, 140);
-                const detKeyIdx = getDeterministicNumber(title + artist + "key", 0, 11);
-
-                // Simulate analysis time
-                setTimeout(() => {
-                    setOriginalBpm(detBpm);
-                    setOriginalKey(KEYS[detKeyIdx]);
-                    setAnalyzing(false);
-                }, 1000);
-            } catch (e) {
-                setAnalyzing(false);
-            }
-        };
-
-        // Report BPM to parent
-        useEffect(() => {
-            if(onReportBpm) onReportBpm(originalBpm);
-        }, [originalBpm]);
-
-        useEffect(() => {
-            if (!trackData) return;
-            const initAudio = async () => {
-                setLoadingAudio(true); setLoaded(false); setIsPlaying(false); setCurrentTime(0); setStemMode('original'); setCueTime(0); setPausedTime(0);
-                if (player) { player.stop(); player.dispose(); }
-                if (_eqNode.current) _eqNode.current.dispose();
-                if (_pitchShiftNode.current) _pitchShiftNode.current.dispose();
-                if (midSideSplit.current) midSideSplit.current.dispose();
-                if (_voxPitch.current) _voxPitch.current.dispose();
-                if (_voxDist.current) _voxDist.current.dispose();
-                if (_voxCheby.current) _voxCheby.current.dispose();
-                if (_voxReverb.current) _voxReverb.current.dispose();
-                if (_voxChorus.current) _voxChorus.current.dispose();
-                if (_voxBit.current) _voxBit.current.dispose();
-
-                await initMaster();
-                const msSplit = new Tone.MidSideSplit(); const msMerge = new Tone.MidSideMerge(); const mGain = new Tone.Gain(); const sGain = new Tone.Gain(); const mFilter = new Tone.Filter(20000, "lowpass"); const newEq = new Tone.EQ3(0, 0, 0); const newPitchShift = new Tone.PitchShift({ pitch: 0, windowSize: 0.1, overlap: 0.05, wet: 0 });
-
-                // Advanced Vocal FX Chain (Mid Channel)
-                // Pitch -> Filter -> Distortion -> Cheby -> BitCrush -> Chorus -> Reverb
-                const vPitch = new Tone.PitchShift({ pitch: 0, windowSize: 0.04, delayTime: 0, feedback: 0 });
-                const vDist = new Tone.Distortion(0);
-                const vCheby = new Tone.Chebyshev(50);
-                const vReverb = new Tone.Reverb({ decay: 1.5, preDelay: 0.01 });
-                const vChorus = new Tone.Chorus({ frequency: 2.5, delayTime: 2.5, depth: 0.5 });
-                const vBit = new Tone.BitCrusher(16);
-
-                // Init Wets
-                vDist.wet.value = 0; vCheby.wet.value = 0; vReverb.wet.value = 0; vChorus.wet.value = 0; vBit.wet.value = 0;
-                await vReverb.generate();
-
-                midSideSplit.current = msSplit; midSideMerge.current = msMerge; midGain.current = mGain; sideGain.current = sGain; midFilter.current = mFilter; _eqNode.current = newEq; _pitchShiftNode.current = newPitchShift;
-                _voxPitch.current = vPitch; _voxDist.current = vDist; _voxCheby.current = vCheby;
-                _voxReverb.current = vReverb; _voxChorus.current = vChorus; _voxBit.current = vBit;
-
-                // Chain Construction
-                msSplit.mid.connect(mGain);
-                mGain.connect(mFilter);
-                mFilter.connect(vPitch);
-                vPitch.connect(vDist);
-                vDist.connect(vCheby);
-                vCheby.connect(vBit);
-                vBit.connect(vChorus);
-                vChorus.connect(vReverb);
-                vReverb.connect(msMerge.mid);
-
-                // Side Chain: Side -> Gain -> MS Merge
-                msSplit.side.connect(sGain);
-                sGain.connect(msMerge.side);
-
-                // Post MS Merge -> EQ -> Pitch -> Master
-                msMerge.connect(newEq);
-                newEq.connect(newPitchShift);
-                newPitchShift.connect(window.masterCompressor);
-
-                const newPlayer = new Tone.GrainPlayer({
-                    url: trackData.previewUrl || trackData.url,
-                    loop: true,
-                    grainSize: 0.2, overlap: 0.1,
-                    autostart: false, volume: -10,
-                    onload: () => {
-                        setLoaded(true); setLoadingAudio(false); setDuration(newPlayer.buffer.duration); drawWaveform(newPlayer.buffer, 0);
-                        if (trackData.trackName && trackData.artistName && trackData.artistName !== "Local Upload") {
-                            analyzeMetadata(trackData.trackName, trackData.artistName);
-                        } else {
-                            setTimeout(() => {
-                                setOriginalBpm(Math.floor(Math.random() * (132 - 118) + 118));
-                                setOriginalKey(KEYS[Math.floor(Math.random() * KEYS.length)]);
-                            }, 500);
-                        }
-                    },
-                    onerror: () => { setLoadingAudio(false); alert("Could not load audio."); }
-                }).connect(msSplit);
-
-                setPlayer(newPlayer);
-            };
-            initAudio();
-            return () => { if(player) player.dispose(); };
-        }, [trackData]);
-
-        // ... (useEffect for playback rate, loop, drawWaveform)
-        useEffect(() => {
-            if (!player || !loaded) return;
-            if (isMasterSyncEnabled) { const rate = masterBpm / originalBpm; let keyDiff = KEYS.indexOf(masterKey) - KEYS.indexOf(originalKey); if (keyDiff > 6) keyDiff -= 12; if (keyDiff < -6) keyDiff += 12; player.playbackRate = rate; player.detune = keyDiff * 100; setPlaybackRate(rate); setPitchShift(keyDiff); }
-            else { player.playbackRate = playbackRate; player.detune = pitchShift * 100; }
-        }, [masterBpm, masterKey, originalBpm, originalKey, isMasterSyncEnabled, player, loaded, playbackRate, pitchShift]);
-
-        const handlePlay = async () => { if(!loaded || isPlaying) return; await initMaster(); let startPos = pausedTime; if (startPos === 0 && cueTime > 0) startPos = cueTime; player.start(Tone.now(), startPos); startTimeRef.current = Tone.now() - (startPos / player.playbackRate); setIsPlaying(true); };
-        const handlePause = () => { if(!loaded || !isPlaying) return; player.stop(); const now = Tone.now(); const elapsed = (now - startTimeRef.current) * player.playbackRate; setPausedTime(elapsed % duration); setIsPlaying(false); };
-        const handleStop = () => { if(!loaded) return; player.stop(); setIsPlaying(false); setPausedTime(cueTime); setCurrentTime(cueTime); if(playheadRef.current) playheadRef.current.style.left = `${(cueTime/duration)*100}%`; };
-        const handleSetCue = () => { if(!loaded) return; const newCue = currentTime; setCueTime(newCue); drawWaveform(player.buffer, newCue); };
-        const handleComplimentClick = async () => {
-            if (!trackData) return;
-            setFindingMatch(true);
-            await onCompliment(id, trackData.trackName, trackData.artistName);
-            setFindingMatch(false);
-        };
-        const handleManualTempo = (e) => { if(!isMasterSyncEnabled) setPlaybackRate(parseFloat(e.target.value)); };
-        const handleManualPitch = (e) => { if(!isMasterSyncEnabled) setPitchShift(parseFloat(e.target.value)); };
-
-        const handleLoop = (beats) => {
-            if (!player || !loaded) return;
-            if (beats === null) {
-                player.loopStart = 0;
-                player.loopEnd = player.buffer.duration;
-                setActiveLoop(null);
-            } else {
-                const now = Tone.now();
-                const elapsed = (now - startTimeRef.current) * player.playbackRate;
-                const curr = elapsed % duration;
-
-                const beatDur = 60 / originalBpm;
-                const loopDur = beatDur * beats;
-
-                player.loopStart = curr;
-                let end = curr + loopDur;
-                if (end > player.buffer.duration) end = player.buffer.duration;
-                player.loopEnd = end;
-                setActiveLoop(beats);
-            }
-        };
-
-        useEffect(() => {
-            const loop = () => { if(player && isPlaying && duration > 0) { const now = Tone.now(); const elapsed = (now - startTimeRef.current) * player.playbackRate; const curr = elapsed % duration; setCurrentTime(curr); if(playheadRef.current) { const pct = (curr / duration) * 100; playheadRef.current.style.left = `${pct}%`; } } rafRef.current = requestAnimationFrame(loop); };
-            if(isPlaying) loop();
-            return () => cancelAnimationFrame(rafRef.current);
-        }, [isPlaying, duration, player]);
-
-        const drawWaveform = (buffer, cuePos = 0) => {
-            if (!canvasRef.current) return;
-            const ctx = canvasRef.current.getContext('2d');
-            const w = canvasRef.current.width; const h = canvasRef.current.height;
-            const data = buffer.getChannelData(0); const step = Math.ceil(data.length / w); const amp = h / 2;
-            ctx.clearRect(0, 0, w, h); ctx.fillStyle = id === 'A' ? '#3b82f6' : '#ec4899'; ctx.beginPath(); ctx.strokeStyle = '#334155'; ctx.moveTo(0, h/2); ctx.lineTo(w, h/2); ctx.stroke();
-            for (let i = 0; i < w; i++) { let min = 1.0, max = -1.0; for (let j = 0; j < step; j++) { const val = data[(i * step) + j]; if (val < min) min = val; if (val > max) max = val; } const y = (1 + min) * amp; const height = Math.max(1, (max - min) * amp); ctx.fillRect(i, y, 1, height); }
-            if (cuePos > 0) { const cueX = (cuePos / buffer.duration) * w; ctx.beginPath(); ctx.strokeStyle = '#ef4444'; ctx.lineWidth = 2; ctx.moveTo(cueX, 0); ctx.lineTo(cueX, h); ctx.stroke(); ctx.fillStyle = '#ef4444'; ctx.beginPath(); ctx.moveTo(cueX, 0); ctx.lineTo(cueX + 10, 0); ctx.lineTo(cueX, 10); ctx.fill(); }
-        };
-
-        return (
-            <div className={`relative bg-slate-900/30 backdrop-blur-md rounded-xl border-2 p-4 transition-all ${id==='A' ? 'border-blue-500/30' : 'border-pink-500/30'} ${isPlaying ? (id==='A' ? 'deck-active-a' : 'deck-active-b') : ''}`}>
-                <div className="flex justify-between items-start mb-4">
-                    <div className="overflow-hidden">
-                        <h3 className={`text-xl font-black uppercase ${id==='A' ? 'text-blue-400' : 'text-pink-400'}`}>Deck {id}</h3>
-                        <div className="text-sm text-white font-medium truncate w-48">{trackData ? trackData.trackName : "No Track Loaded"}</div>
-                    </div>
-                    <div className="flex flex-col items-end gap-1">
-                        <div className={`px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wider ${loaded ? 'bg-green-500/20 text-green-400' : 'bg-slate-800 text-slate-500'}`}>
-                            {loadingAudio ? "Loading..." : (loaded ? (analyzing ? "Analyzing..." : "Ready") : "Empty")}
-                        </div>
-                        {loaded && (
-                            <button onClick={handleComplimentClick} disabled={findingMatch} className={`mt-1 flex items-center gap-1 px-2 py-1 rounded text-[9px] font-bold uppercase tracking-wider transition-all ${findingMatch ? 'bg-purple-500/20 text-purple-300 cursor-wait' : 'bg-purple-600 hover:bg-purple-500 text-white cursor-pointer shadow-lg shadow-purple-500/20'}`} title="Auto-find a harmonically compatible song">
-                                {findingMatch ? <div className="loader w-3 h-3 border-purple-300 border-t-transparent"></div> : <Icon name="wand" size={10} />} {findingMatch ? "Scanning..." : "Magic Match"}
-                            </button>
-                        )}
-                    </div>
-                </div>
-                <div className="h-20 bg-slate-950/50 rounded mb-2 overflow-hidden relative group border border-slate-800/50">
-                    <canvas ref={canvasRef} width="300" height="80" className="w-full h-full opacity-80"></canvas>
-                    {loaded && <div ref={playheadRef} className="absolute top-0 bottom-0 w-0.5 bg-white shadow-[0_0_10px_white] playhead-line pointer-events-none" style={{left: '0%'}}></div>}
-                    {loaded && <div className="absolute top-2 right-2 text-[10px] font-mono font-bold text-white bg-black/60 px-2 py-1 rounded backdrop-blur-sm">{formatTime(currentTime)} / {formatTime(duration)}</div>}
-                </div>
-                <div className="flex justify-between items-center gap-2 mb-4 bg-slate-950/50 p-2 rounded-lg">
-                    <div className="flex gap-1">
-                        <StemToggle label="Orig" active={stemMode === 'original'} onClick={() => setStemMode('original')} disabled={!loaded} color={id === 'A' ? 'blue' : 'pink'} />
-                        <StemToggle label="Vox" active={stemMode === 'vocal'} onClick={() => setStemMode('vocal')} disabled={!loaded} color={id === 'A' ? 'blue' : 'pink'} />
-                        <StemToggle label="Inst" active={stemMode === 'instrumental'} onClick={() => setStemMode('instrumental')} disabled={!loaded} color={id === 'A' ? 'blue' : 'pink'} />
-                    </div>
-                    <select value={vocalFx} onChange={e => setVocalFx(e.target.value)} disabled={!loaded} className="bg-slate-900 border border-slate-700 text-[10px] rounded px-2 text-white font-bold w-28">
-                        <option value="off">Vocals: Raw</option>
-                        <option value="pop">AI: Pop Diva</option>
-                        <option value="trap">AI: Trap God</option>
-                        <option value="hyper">AI: Hyperpop</option>
-                        <option value="lofi">AI: Lo-Fi Indie</option>
-                        <option value="dua">AI: Alto Star</option>
-                        <option value="weekend">AI: Falsetto</option>
-                        <option value="robot">AI: Robot</option>
-                    </select>
-                    <button onClick={handleSetCue} disabled={!loaded} className="bg-red-500/20 hover:bg-red-500/40 text-red-400 border border-red-500/50 px-3 py-1 text-[10px] font-bold rounded-full transition">SET CUE</button>
-                </div>
-                <div className="flex flex-col gap-4">
-                    <div className="grid grid-cols-3 gap-2">
-                        <button onClick={handlePlay} disabled={!loaded || isPlaying} className={`py-3 rounded-lg font-bold flex items-center justify-center gap-2 transition-all ${isPlaying ? 'bg-green-500/20 text-green-400 border border-green-500/30' : 'bg-slate-800/50 text-white border border-slate-700 hover:bg-slate-700/50'}`}><Icon name="play" size={16} /> PLAY</button>
-                        <button onClick={handlePause} disabled={!loaded || !isPlaying} className="py-3 bg-slate-800/50 text-white border border-slate-700 hover:bg-slate-700/50 rounded-lg font-bold flex items-center justify-center gap-2"><Icon name="pause" size={16} /> PAUSE</button>
-                        <button onClick={handleStop} disabled={!loaded} className="py-3 bg-slate-800/50 text-red-400 border border-slate-700 hover:bg-red-900/20 rounded-lg font-bold flex items-center justify-center gap-2"><Icon name="stop" size={16} /> STOP</button>
-                    </div>
-
-                    <div className="bg-slate-950/50 p-2 rounded-lg border border-slate-800/50">
-                        <div className="text-[10px] font-bold uppercase text-slate-400 mb-1 flex justify-between">
-                            <span>Loop</span>
-                            {activeLoop && <span className="text-yellow-400 animate-pulse">ACTIVE: {activeLoop} Beats</span>}
-                        </div>
-                        <div className="flex gap-1">
-                            {[1, 2, 4, 8].map(b => (
-                                <button key={b} onClick={() => handleLoop(b)} disabled={!loaded} className={`flex-1 py-1 text-[10px] font-bold rounded border transition-all ${activeLoop === b ? 'bg-yellow-500 text-black border-yellow-500' : 'bg-slate-800 text-slate-400 border-slate-700 hover:border-slate-500'}`}>{b}</button>
-                            ))}
-                            <button onClick={() => handleLoop(null)} disabled={!loaded || !activeLoop} className={`flex-1 py-1 text-[10px] font-bold rounded border transition-all ${!activeLoop ? 'opacity-50 cursor-not-allowed bg-slate-900 border-slate-800' : 'bg-red-500/20 text-red-400 border-red-500 hover:bg-red-500 hover:text-white'}`}>EXIT</button>
-                        </div>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-4 bg-slate-950/50 p-3 rounded-lg border border-slate-800/50">
-                        <div className="flex flex-col gap-1">
-                            <div className="flex justify-between text-[10px] font-bold uppercase text-slate-400"><span>Tempo</span><span className={isMasterSyncEnabled ? "text-green-400" : "text-blue-400"}>{playbackRate.toFixed(2)}x</span></div>
-                            <input type="range" min="0.5" max="1.5" step="0.01" value={playbackRate} onChange={handleManualTempo} disabled={isMasterSyncEnabled} className={isMasterSyncEnabled ? "opacity-50 cursor-not-allowed" : ""} />
-                        </div>
-                        <div className="flex flex-col gap-1">
-                            <div className="flex justify-between text-[10px] font-bold uppercase text-slate-400"><span>Pitch</span><span className={isMasterSyncEnabled ? "text-green-400" : "text-pink-400"}>{pitchShift > 0 ? '+' : ''}{Math.round(pitchShift)} st</span></div>
-                            <input type="range" min="-12" max="12" step="1" value={pitchShift} onChange={handleManualPitch} disabled={isMasterSyncEnabled} className={isMasterSyncEnabled ? "opacity-50 cursor-not-allowed" : ""} />
-                        </div>
-                    </div>
-                </div>
-            </div>
-        );
-    });
-
-    // ... (MashupControls unchanged)
-    const MashupControls = ({ deckARef, deckBRef, isAutoSync, setIsAutoSync, masterBpm, setMasterBpm, masterKey, setMasterKey }) => {
-        const [deckAConfig, setDeckAConfig] = useState({ low: true, mid: true, high: true });
-        const [deckBConfig, setDeckBConfig] = useState({ low: false, mid: true, high: true });
-        const [isPlayingMashup, setIsPlayingMashup] = useState(false);
-        const [autoSwap, setAutoSwap] = useState(false);
-
-        useEffect(() => { let interval; if (isPlayingMashup && autoSwap) { interval = setInterval(() => randomizeMix(true), 8000); } return () => clearInterval(interval); }, [isPlayingMashup, autoSwap]);
-        useEffect(() => { const applyEQ = (deckRef, config) => { if (deckRef.current) { const low = config.low ? 0 : -40; const mid = config.mid ? 0 : -40; const high = config.high ? 0 : -40; deckRef.current.setEQ(low, mid, high); } }; applyEQ(deckARef, deckAConfig); applyEQ(deckBRef, deckBConfig); }, [deckAConfig, deckBConfig, deckARef, deckBRef]);
-        const toggleDeckPart = (deck, part) => { if (deck === 'A') setDeckAConfig(prev => ({ ...prev, [part]: !prev[part] })); else setDeckBConfig(prev => ({ ...prev, [part]: !prev[part] })); };
-        const playMashup = async () => { if (!deckARef.current || !deckBRef.current) return; if (isPlayingMashup) { deckARef.current.stop(); deckBRef.current.stop(); setIsPlayingMashup(false); } else { await initMaster(); deckARef.current.play(); deckBRef.current.play(); setIsPlayingMashup(true); } };
-        const randomizeMix = (keepPosition = false) => { const patterns = [ { a: {low:1, mid:0, high:0}, b: {low:0, mid:1, high:1} }, { a: {low:0, mid:1, high:1}, b: {low:1, mid:0, high:0} }, { a: {low:1, mid:1, high:1}, b: {low:1, mid:1, high:1} }, { a: {low:1, mid:0, high:1}, b: {low:0, mid:1, high:0} }, ]; const randomPat = patterns[Math.floor(Math.random() * patterns.length)]; setDeckAConfig({ low: !!randomPat.a.low, mid: !!randomPat.a.mid, high: !!randomPat.a.high }); setDeckBConfig({ low: !!randomPat.b.low, mid: !!randomPat.b.mid, high: !!randomPat.b.high }); };
-        const ToggleBtn = ({ label, active, onClick, color }) => ( <button onClick={onClick} className={`flex-1 py-2 text-[10px] font-bold uppercase rounded border transition-all ${active ? (color === 'blue' ? 'bg-blue-500 border-blue-500 text-white shadow-lg shadow-blue-500/20' : 'bg-pink-500 border-pink-500 text-white shadow-lg shadow-pink-500/20') : 'bg-slate-800/50 border-slate-700 text-slate-500 hover:border-slate-500'}`}>{label}</button> );
-
-        return (
-            <div className="w-full max-w-4xl mt-8 bg-slate-900/30 backdrop-blur-md rounded-2xl border-2 border-purple-500/50 p-6 relative overflow-hidden shadow-2xl relative z-10">
-                <div className="absolute top-0 left-1/2 -translate-x-1/2 w-2/3 h-1 bg-gradient-to-r from-transparent via-purple-500 to-transparent shadow-[0_0_20px_rgba(168,85,247,0.5)]"></div>
-
-                <div className="flex flex-col md:flex-row justify-between items-center mb-6 gap-4">
-                    <div className="flex items-center gap-4">
-                        <h2 className="text-2xl font-black italic tracking-tighter flex items-center gap-2 text-white"><Icon name="layers" className="text-purple-400" /> MASHUP ENGINE</h2>
-                    </div>
-
-                    <div className="flex items-center gap-4 bg-slate-950/50 p-2 rounded-xl border border-slate-800/50">
-                        <div className="flex flex-col items-center border-r border-slate-700 pr-4">
-                            <label className="text-[9px] text-slate-500 font-bold uppercase">Master BPM</label>
-                            <div className="flex items-center gap-2">
-                                <button onClick={() => setMasterBpm(b=>b-1)} className="text-slate-400 hover:text-white bg-slate-800/50 w-5 h-5 rounded text-xs">-</button>
-                                <span className="text-lg font-mono font-bold text-white w-10 text-center">{masterBpm}</span>
-                                <button onClick={() => setMasterBpm(b=>b+1)} className="text-slate-400 hover:text-white bg-slate-800/50 w-5 h-5 rounded text-xs">+</button>
-                            </div>
-                        </div>
-                        <div className="flex flex-col items-center border-r border-slate-700 pr-4">
-                            <label className="text-[9px] text-slate-500 font-bold uppercase">Master Key</label>
-                            <select value={masterKey} onChange={(e) => setMasterKey(e.target.value)} className="bg-transparent text-lg font-mono font-bold text-blue-400 focus:outline-none cursor-pointer text-center w-12">{KEYS.map(k => <option key={k} value={k}>{k}</option>)}</select>
-                        </div>
-                        <div className="flex flex-col gap-1 pl-1">
-                            <div className="flex items-center gap-2">
-                                <button onClick={() => setIsAutoSync(!isAutoSync)} className={`w-8 h-4 rounded-full relative transition-colors ${isAutoSync ? 'bg-green-500' : 'bg-slate-700'}`}><div className={`absolute top-0.5 w-3 h-3 bg-white rounded-full transition-all ${isAutoSync ? 'left-4.5' : 'left-0.5'}`}></div></button>
-                                <span className="text-[9px] font-bold text-slate-400 uppercase">Sync</span>
-                            </div>
-                            <div className="flex items-center gap-2">
-                                <button onClick={() => setAutoSwap(!autoSwap)} className={`w-8 h-4 rounded-full relative transition-colors ${autoSwap ? 'bg-purple-500' : 'bg-slate-700'}`}><div className={`absolute top-0.5 w-3 h-3 bg-white rounded-full transition-all ${autoSwap ? 'left-4.5' : 'left-0.5'}`}></div></button>
-                                <span className="text-[9px] font-bold text-slate-400 uppercase">Swap</span>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-                    <div className="flex flex-col gap-2"><div className="text-xs font-bold text-blue-400 mb-1 uppercase tracking-wider">Deck A Mix</div><div className="flex gap-2"><ToggleBtn label="Bass" active={deckAConfig.low} onClick={() => toggleDeckPart('A', 'low')} color="blue" /><ToggleBtn label="Mid" active={deckAConfig.mid} onClick={() => toggleDeckPart('A', 'mid')} color="blue" /><ToggleBtn label="High" active={deckAConfig.high} onClick={() => toggleDeckPart('A', 'high')} color="blue" /></div></div>
-                    <div className="flex flex-col gap-3 justify-center">
-                        <button onClick={playMashup} className={`w-full py-4 rounded-xl font-black text-lg shadow-lg transition-all flex items-center justify-center gap-2 ${isPlayingMashup ? 'bg-purple-600 hover:bg-purple-700 text-white shadow-purple-500/20' : 'bg-gradient-to-r from-blue-600 to-pink-600 hover:from-blue-500 hover:to-pink-500 text-white'}`}><Icon name={isPlayingMashup ? "pause" : "play"} /> {isPlayingMashup ? "PAUSE MASHUP" : "PLAY MASHUP"}</button>
-                         <button onClick={() => randomizeMix(false)} className="w-full py-2 bg-slate-800/50 hover:bg-slate-700/50 text-slate-300 font-bold rounded-lg text-xs flex items-center justify-center gap-2 transition"><Icon name="shuffle" size={14} /> RANDOM MIX & JUMP</button>
-                    </div>
-                    <div className="flex flex-col gap-2"><div className="text-xs font-bold text-pink-400 mb-1 uppercase tracking-wider text-right">Deck B Mix</div><div className="flex gap-2"><ToggleBtn label="Bass" active={deckBConfig.low} onClick={() => toggleDeckPart('B', 'low')} color="pink" /><ToggleBtn label="Mid" active={deckBConfig.mid} onClick={() => toggleDeckPart('B', 'mid')} color="pink" /><ToggleBtn label="High" active={deckBConfig.high} onClick={() => toggleDeckPart('B', 'high')} color="pink" /></div></div>
-                </div>
-            </div>
-        );
-    };
-
-    const App = () => {
-        const [masterBpm, setMasterBpm] = useState(128);
-        const [masterKey, setMasterKey] = useState('C');
-        const [isAutoSync, setIsAutoSync] = useState(false);
-        const [trackA, setTrackA] = useState(null);
-        const [trackB, setTrackB] = useState(null);
-        const deckARef = useRef();
-        const deckBRef = useRef();
-        const [vizMode, setVizMode] = useState('bars');
-        const [uiVisible, setUiVisible] = useState(true);
-        const [isRecording, setIsRecording] = useState(false);
-
-        const [deckABpm, setDeckABpm] = useState(null);
-        const [deckBBpm, setDeckBBpm] = useState(null);
-
-        // Auto-Center BPM Logic
-        useEffect(() => {
-            if (deckABpm && deckBBpm) {
-                const avg = Math.round((deckABpm + deckBBpm) / 2);
-                setMasterBpm(avg);
-            } else if (deckABpm) {
-                setMasterBpm(deckABpm);
-            } else if (deckBBpm) {
-                setMasterBpm(deckBBpm);
-            }
-        }, [deckABpm, deckBBpm]);
-
-        const handleBpmReport = (deckId, bpm) => {
-            if (deckId === 'A') setDeckABpm(bpm);
-            else setDeckBBpm(bpm);
-        };
-
-        const handleToggleRecording = async () => {
-            if (!window.masterRecorder) await initMaster();
-            if (window.masterRecorder.state === 'started') {
-                const recording = await window.masterRecorder.stop();
-                const url = URL.createObjectURL(recording);
-                const anchor = document.createElement("a");
-                anchor.download = `MixMaster_Recording_${new Date().toISOString().slice(0,19).replace(/:/g,"-")}.webm`;
-                anchor.href = url;
-                anchor.click();
-                setIsRecording(false);
-            } else {
-                window.masterRecorder.start();
-                setIsRecording(true);
-            }
-        };
-
-        const handleLoadTrack = (deck, track) => {
-            const t = { ...track, artistName: track.artistName || "Unknown Artist", trackName: track.trackName || track.name };
-            if(deck === 'A') setTrackA(t);
-            else setTrackB(t);
-        };
-        const handleFileUpload = (e, deck) => {
-            const file = e.target.files[0];
-            if(file) handleLoadTrack(deck, { name: file.name, url: URL.createObjectURL(file), artistName: "Local Upload", trackName: file.name.split('.')[0] });
-        };
-
-        const handleAutoCompliment = async (sourceDeck, trackName, artistName) => {
+          const executeVibeTransition = () => {
+            const sourceDeck = currentActiveDeck.current;
             const targetDeck = sourceDeck === 'A' ? 'B' : 'A';
+            const targetRef = targetDeck === 'A' ? deckARef : deckBRef;
+            const sourceRef = sourceDeck === 'A' ? deckARef : deckBRef;
 
-            // 1. Ask LLM for a NEW, Random, Harmonically Compatible Match
-            // We use a random seed in the prompt to prevent caching and ensure variety
-            const randomSeed = Math.floor(Math.random() * 10000);
-            const prompt = `Suggest a famous mainstream song that is Camelot Key compatible (harmonically mixable) with "${trackName}" by "${artistName}".
-            It must be a DIFFERENT song than the input.
-            Pick a random compatible song from a different artist if possible.
-            Random Seed: ${randomSeed}.
-            Return ONLY the song title and artist name in the format "Title - Artist". Do not add any extra text.`;
+            targetRef.current?.play();
 
-            let query = artistName; // Fallback
+            const startFade = crossfade;
+            const endFade = targetDeck === 'A' ? 0 : 1;
+            let startT = performance.now();
+            const duration = 2500;
+
+            const anim = (now) => {
+              const p = Math.min((now - startT) / duration, 1);
+              const eased = p < 0.5 ? 2 * p * p : 1 - Math.pow(-2 * p + 2, 2) / 2;
+              const currentVal = startFade + (endFade - startFade) * eased;
+
+              setCrossfade(currentVal);
+              audioEngine.crossFade.fade.value = currentVal;
+
+              if (p < 1) {
+                requestAnimationFrame(anim);
+              } else {
+                sourceRef.current?.stop();
+                currentActiveDeck.current = targetDeck;
+              }
+            };
+            requestAnimationFrame(anim);
+          };
+
+          const toggleVibeMix = async () => {
+            if (!audioStarted) await initAudio();
+
+            const newAutoMode = !autoDjMode;
+            setAutoDjMode(newAutoMode);
+
+            if (newAutoMode) {
+              const searchRes = await fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(vibeMood)}&entity=song&limit=1`);
+              const data = await searchRes.json();
+              if (data.results?.[0]) {
+                  const r = data.results[0];
+                  const track = { id: r.trackId, name: r.trackName, artist: r.artistName, image: r.artworkUrl100, url: r.previewUrl, type: 'preview', trackName: r.trackName, artistName: r.artistName };
+                  setTrackA(track);
+                  setCrossfade(0);
+                  audioEngine.crossFade.fade.value = 0;
+                  currentActiveDeck.current = 'A';
+                  setIsPlayingMashup(true);
+                  setTimeout(() => deckARef.current?.play(), 500);
+              }
+            } else {
+              setIsPlayingMashup(false);
+              deckARef.current?.stop();
+              deckBRef.current?.stop();
+              if (vibeTimerRef.current) clearInterval(vibeTimerRef.current);
+              if (nextTrackTimerRef.current) clearTimeout(nextTrackTimerRef.current);
+            }
+          };
+
+          useEffect(() => {
+            if (!autoDjMode || !isPlayingMashup) return;
+
+            const startVibeLoop = () => {
+                if (vibeTimerRef.current) clearInterval(vibeTimerRef.current);
+                if (nextTrackTimerRef.current) clearTimeout(nextTrackTimerRef.current);
+
+                vibeTimerRef.current = window.setInterval(() => {
+                    executeVibeTransition();
+                    nextTrackTimerRef.current = window.setTimeout(() => {
+                        prepareNextVibeTrack();
+                    }, 15000);
+                }, 28000);
+
+                nextTrackTimerRef.current = window.setTimeout(() => {
+                    prepareNextVibeTrack();
+                }, 15000);
+            };
+
+            startVibeLoop();
+
+            return () => {
+              if (vibeTimerRef.current) clearInterval(vibeTimerRef.current);
+              if (nextTrackTimerRef.current) clearTimeout(nextTrackTimerRef.current);
+            };
+          }, [autoDjMode, isPlayingMashup]);
+
+          const handleAIDJInteraction = async (inputOverride) => {
+            if (isInteracting.current || !isJDActive) return;
+            const prompt = inputOverride || aiInput;
+            if (!prompt.trim()) return;
+
+            isInteracting.current = true;
+            if (!inputOverride) setAiInput('');
+            setAiResponse('...analyzing audio spectrum...');
+
+            const context = {
+              deckA: trackA ? { name: trackA.name, artist: trackA.artist } : 'Empty',
+              deckB: trackB ? { name: trackB.name, artist: trackB.artist } : 'Empty',
+              masterBpm,
+              crossfade,
+              isPlaying: isPlayingMashup,
+              autoPilot: autoDjMode,
+              currentVibe: vibeMood,
+              hostActive: isJDActive
+            };
 
             try {
-                const suggestion = await askLLM(prompt);
-                if (suggestion && suggestion.length < 100) {
-                    query = suggestion.trim();
-                    // Clean up quotes if present
-                    query = query.replace(/"/g, '');
-                    console.log("LLM Suggested:", query);
-                }
-            } catch (e) { console.error("LLM failed, falling back to artist search"); }
+              const result = await interactWithAIDJ(prompt, aiHistory, context);
+              if (!result) throw new Error("Null result");
 
-            // 2. Search YouTube (most comprehensive) for the suggestion
-            try {
-                const videos = await searchYouTube(query);
-                if (videos && videos.length > 0) {
-                    // Pick the top result
-                    const match = videos[0];
-                    // Convert to track format
-                    const track = {
-                        name: match.title,
-                        trackName: match.title,
-                        artistName: match.author,
-                        url: `https://www.youtube.com/watch?v=${match.videoId}`, // Tone.js might fail here without a proxy, but we can try to find a preview or just load it for metadata.
-                        // Wait, deck needs a playble URL.
-                        // YouTube Audio Stream is hard to get without backend.
-                        // Strategy: We will try to find it on iTunes (preview) first for Deck Playback,
-                        // or Audius if possible.
-                        // If we are strictly client side, playing FULL YouTube in the Deck (AudioContext) is blocked by CORS.
-                        // The User asked for "Magic Match", usually implies loading the deck.
-                        // If we can't play it in the deck, we should alert.
+              const newResponse = result.text || 'Acknowledged.';
+              setAiResponse(newResponse);
+              setAiHistory(prev => [...prev.slice(-6), { role: 'user', parts: [{ text: prompt }] }, { role: 'model', parts: [{ text: newResponse }] }]);
 
-                        // Revised Strategy for Sandbox:
-                        // Search iTunes for the LLM suggestion. iTunes previews work in Tone.js.
-                    };
-
-                    // Try iTunes Search for the *Suggestion*
-                    const itunesResp = await fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(query)}&entity=song&limit=1`);
-                    const itunesData = await itunesResp.json();
-
-                    if (itunesData.results.length > 0) {
-                        const r = itunesData.results[0];
-                        handleLoadTrack(targetDeck, {
-                            name: r.trackName,
-                            trackName: r.trackName,
-                            artistName: r.artistName,
-                            url: r.previewUrl,
-                            image: r.artworkUrl100
-                        });
-                    } else {
-                        // Fallback to Audius
-                         const audiusTracks = await searchAudius(query);
-                         if (audiusTracks.length > 0) {
-                             const r = audiusTracks[0];
-                             handleLoadTrack(targetDeck, { ...r, trackName: r.name, artistName: r.artist });
-                         } else {
-                             alert(`AI suggested "${query}", but no streamable version was found.`);
-                         }
+              if (result.functionCalls) {
+                for (const call of result.functionCalls) {
+                  if (call.name === 'sync_master_levels') {
+                    if (typeof call.args.bpm === 'number') setMasterBpm(call.args.bpm);
+                    if (typeof call.args.key === 'string') setMasterKey(call.args.key);
+                  }
+                  if (call.name === 'set_auto_pilot') setAutoDjMode(call.args.enabled);
+                  if (call.name === 'load_track') {
+                    const searchRes = await fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(call.args.query)}&entity=song&limit=1`);
+                    const data = await searchRes.json();
+                    if (data.results?.[0]) {
+                       const track = {
+                         id: data.results[0].trackId,
+                         name: data.results[0].trackName, artist: data.results[0].artistName,
+                         image: data.results[0].artworkUrl100, url: data.results[0].previewUrl,
+                         type: 'preview', trackName: data.results[0].trackName, artistName: data.results[0].artistName
+                       };
+                       if (call.args.deck === 'A') setTrackA(track); else setTrackB(track);
                     }
-                } else {
-                     // Fallback to Artist Search on Audius (Old logic)
-                     const audiusTracks = await searchAudius(artistName);
-                     if (audiusTracks.length > 0) {
-                         const r = audiusTracks[0];
-                         handleLoadTrack(targetDeck, { ...r, trackName: r.name, artistName: r.artist });
-                     } else {
-                         alert("No matches found.");
-                     }
+                  }
+                  if (call.name === 'smart_transition') {
+                    const end = call.args.targetDeck === 'A' ? 0 : 1;
+                    const durMs = (call.args.duration || 5) * 1000;
+                    const start = crossfade;
+                    let startT = performance.now();
+                    const anim = (now) => {
+                      const p = Math.min((now - startT) / durMs, 1);
+                      const val = start + (end - start) * p;
+                      setCrossfade(val);
+                      audioEngine.crossFade.fade.value = val;
+                      if (p < 1) requestAnimationFrame(anim);
+                      else {
+                        currentActiveDeck.current = call.args.targetDeck;
+                        if (call.args.swapOtherDeck) handleAIDJInteraction(`JD, cycle the silent deck harmonics.`);
+                      }
+                    };
+                    requestAnimationFrame(anim);
+                  }
+                  if (call.name === 'vibe_shift') {
+                    setVibeMood(call.args.mood);
+                    const searchRes = await fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(call.args.mood)}&entity=song&limit=2`);
+                    const data = await searchRes.json();
+                    if (data.results?.length >= 2) {
+                      setTrackA({...data.results[0], url: data.results[0].previewUrl, name: data.results[0].trackName, artist: data.results[0].artistName, image: data.results[0].artworkUrl100});
+                      setTrackB({...data.results[1], url: data.results[1].previewUrl, name: data.results[1].trackName, artist: data.results[1].artistName, image: data.results[1].artworkUrl100});
+                      setCrossfade(0);
+                      audioEngine.crossFade.fade.value = 0;
+                      currentActiveDeck.current = 'A';
+                      deckARef.current?.play();
+                      setIsPlayingMashup(true);
+                      setAutoDjMode(true);
+                    }
+                  }
                 }
-            } catch (e) { console.error(e); alert("Could not find a match."); }
-        };
+              }
+            } catch (err) {
+               console.error("AI Error:", err);
+               if(err.message?.includes('Missing API Key')) {
+                   setKeyModalOpen(true);
+               }
+               setAiResponse("Signal dropped. Re-calibrating...");
+            } finally {
+              isInteracting.current = false;
+            }
+          };
 
-        return (
-            <>
-                <GlobalVisualizer mode={vizMode} />
-                <div className={`relative z-10 min-h-screen p-4 max-w-6xl mx-auto flex flex-col items-center pb-20 ui-container ${uiVisible ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
-                    <header className="flex flex-col md:flex-row items-center justify-between mb-8 gap-6 w-full max-w-4xl bg-slate-900/30 backdrop-blur-md p-4 rounded-xl border border-slate-700/50">
-                        <h1 className="text-3xl font-black tracking-tighter bg-gradient-to-r from-blue-400 to-pink-500 bg-clip-text text-transparent">MIXMASTER <span className="text-sm font-normal text-slate-500 ml-2">PRO AI</span></h1>
-                        <div className="flex items-center gap-2">
-                            <button onClick={handleToggleRecording} className={`flex items-center gap-2 px-3 py-1 rounded font-bold text-xs transition border ${isRecording ? 'bg-red-500/20 text-red-500 border-red-500 animate-pulse' : 'bg-slate-950/50 border-slate-700 text-slate-400 hover:text-white hover:border-white'}`}>
-                                <div className={`w-2 h-2 rounded-full ${isRecording ? 'bg-red-500' : 'bg-slate-500'}`}></div> {isRecording ? "REC ON" : "REC MIX"}
-                            </button>
-                            <div className="h-6 w-px bg-slate-700 mx-2"></div>
-                            <button onClick={() => setUiVisible(!uiVisible)} className="bg-slate-950/50 border border-slate-700 rounded px-2 py-1 text-white hover:border-blue-500 hover:text-blue-400 transition" title="Toggle Fullscreen Visualizer"><Icon name={uiVisible ? "eye" : "eyeOff"} size={16} /></button>
-                            <span className="text-xs font-bold text-slate-400 uppercase">Visuals:</span>
-                            <select value={vizMode} onChange={(e) => setVizMode(e.target.value)} className="bg-slate-950/50 border border-slate-700 rounded px-2 py-1 text-xs text-white focus:outline-none cursor-pointer hover:border-blue-500">
-                                <option value="bars">Bars</option><option value="waves">Waves</option><option value="dots">Dots</option><option value="pixels">Pixels</option><option value="fireworks">Fireworks</option><option value="fire">Fire</option>
-                            </select>
-                        </div>
-                    </header>
+          const handleLoadTrack = async (id, track) => {
+            if (!audioStarted) await initAudio();
+            if (id === 'A') setTrackA(track); else setTrackB(track);
+          };
 
-                    <AIFeaturesPanel trackA={trackA} trackB={trackB} />
-                    <SearchPanel onLoadTrack={handleLoadTrack} />
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6 relative w-full mb-8">
-                        <div className="absolute -top-10 left-0 w-full flex justify-between px-4">
-                            <label className="text-xs text-blue-400 cursor-pointer hover:underline flex items-center gap-1"><Icon name="upload" size={12} /> Upload to Deck A <input type="file" className="hidden" accept="audio/*" onChange={(e) => handleFileUpload(e, 'A')} /></label>
-                            <label className="text-xs text-pink-400 cursor-pointer hover:underline flex items-center gap-1"><Icon name="upload" size={12} /> Upload to Deck B <input type="file" className="hidden" accept="audio/*" onChange={(e) => handleFileUpload(e, 'B')} /></label>
-                        </div>
-                        <Deck ref={deckARef} id="A" trackData={trackA} masterBpm={masterBpm} masterKey={masterKey} isMasterSyncEnabled={isAutoSync} onCompliment={handleAutoCompliment} onReportBpm={(bpm) => handleBpmReport('A', bpm)} />
-                        <Deck ref={deckBRef} id="B" trackData={trackB} masterBpm={masterBpm} masterKey={masterKey} isMasterSyncEnabled={isAutoSync} onCompliment={handleAutoCompliment} onReportBpm={(bpm) => handleBpmReport('B', bpm)} />
+          const handlePlayMashup = async () => {
+            if (!audioStarted) await initAudio();
+            if (isPlayingMashup) {
+              deckARef.current?.stop(); deckBRef.current?.stop();
+              setIsPlayingMashup(false); setAutoDjMode(false);
+            } else {
+              if (autoDjMode) {
+                  toggleVibeMix();
+              } else {
+                  deckARef.current?.play(); deckBRef.current?.play();
+                  setIsPlayingMashup(true);
+              }
+            }
+          };
+
+          return (
+            <div className="min-h-screen text-slate-100 selection:bg-blue-500/30">
+              <ApiKeyModal isOpen={keyModalOpen} onClose={() => setKeyModalOpen(false)} />
+              <Visualizer mode={vizMode} />
+
+              {!audioStarted && (
+                <div className="fixed inset-0 z-[100] flex flex-col items-center justify-center bg-slate-950/90 backdrop-blur-3xl p-6 text-center">
+                   <div className="w-24 h-24 bg-blue-600 rounded-full flex items-center justify-center mb-8 shadow-2xl animate-pulse">
+                     <Icon name="radio" size={48} className="text-white" />
+                   </div>
+                   <h1 className="text-4xl font-black italic mb-4 uppercase tracking-tighter">MixMaster Studio <span className="text-blue-500 font-normal">AI-1</span></h1>
+                   <p className="text-slate-400 max-w-sm mb-12 text-sm uppercase tracking-[0.3em] font-bold">Awaiting hardware initialization.</p>
+                   <button onClick={initAudio} className="px-16 py-6 bg-blue-600 hover:bg-blue-500 text-white rounded-full font-black text-xs uppercase tracking-[0.4em] transform active:scale-95 transition-all shadow-xl shadow-blue-500/30">
+                     INITIALIZE AUDIO CORE
+                   </button>
+                   <p className="mt-8 text-xs text-slate-600">v1.2 • Global UMD Edition</p>
+                </div>
+              )}
+
+              <div className={`relative z-10 p-6 max-w-7xl mx-auto transition-all duration-1000 ${uiVisible ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
+                <header className="flex flex-col md:flex-row justify-between items-center mb-10 gap-8 bg-slate-900/40 backdrop-blur-xl p-8 rounded-[2.5rem] border border-white/10 shadow-2xl">
+                  <div className="flex flex-col">
+                    <h1 className="text-5xl font-black italic tracking-tighter bg-gradient-to-r from-blue-400 via-indigo-400 to-pink-500 bg-clip-text text-transparent uppercase">
+                      MIXMASTER <span className="text-white/20 font-light text-base not-italic tracking-[0.4em] ml-2">PRO AI</span>
+                    </h1>
+                    <p className="text-[11px] text-slate-500 font-black uppercase tracking-[0.5em] mt-3 flex items-center gap-2">
+                      <span className={`w-2.5 h-2.5 rounded-full ${isJDSpeaking ? 'bg-red-500 shadow-[0_0_10px_red] animate-pulse' : (isJDActive ? 'bg-green-500 shadow-[0_0_10px_#22c55e]' : 'bg-slate-700')}`}></span> {isJDSpeaking ? 'ON AIR' : (isJDActive ? 'JD STANDBY' : 'JD DORMANT')}
+                    </p>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-4">
+                    <div className="flex items-center gap-4 bg-black/40 px-6 py-4 rounded-2xl border border-white/10 shadow-inner">
+                       <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">SET VIBE</span>
+                       <select
+                         value={vibeMood}
+                         onChange={(e) => setVibeMood(e.target.value)}
+                         className="bg-transparent text-[11px] font-black text-blue-400 focus:outline-none cursor-pointer uppercase tracking-wider hover:text-blue-300 transition-colors"
+                       >
+                         {VIBE_OPTIONS.map(v => <option key={v.query} value={v.query} className="bg-slate-900 text-white">{v.label}</option>)}
+                       </select>
                     </div>
-                    <MashupControls deckARef={deckARef} deckBRef={deckBRef} isAutoSync={isAutoSync} setIsAutoSync={setIsAutoSync} masterBpm={masterBpm} setMasterBpm={setMasterBpm} masterKey={masterKey} setMasterKey={setMasterKey} />
-                    <ReferencePlayer />
+
+                    <button
+                      onClick={toggleVibeMix}
+                      className={`px-8 py-4 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all shadow-xl flex items-center gap-3 border-2 transform active:scale-95 ${autoDjMode ? 'bg-pink-600 border-pink-400 text-white shadow-pink-500/40' : 'bg-slate-800 border-white/10 text-slate-400 hover:text-white hover:border-white/20'}`}
+                    >
+                      <Icon name="refresh" size={16} className={autoDjMode ? 'animate-spin' : ''} /> {autoDjMode ? 'STOP VIBE MIX' : 'START VIBE MIX'}
+                    </button>
+
+                    <div className="flex items-center gap-4 bg-black/40 px-6 py-4 rounded-2xl border border-white/10">
+                      <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">VISUALS</span>
+                      <select value={vizMode} onChange={(e) => setVizMode(e.target.value)} className="bg-transparent text-xs font-black text-white focus:outline-none cursor-pointer uppercase">
+                        <option value={VisualizerMode.BARS} className="bg-slate-900">BARS</option>
+                        <option value={VisualizerMode.WAVES} className="bg-slate-900">WAVES</option>
+                        <option value={VisualizerMode.DOTS} className="bg-slate-900">DOTS</option>
+                      </select>
+                    </div>
+                  </div>
+                </header>
+
+                <div className="mb-10"><SearchPanel onLoadTrack={handleLoadTrack} /></div>
+                <AIFeatures trackA={trackA} trackB={trackB} isPlaying={isPlayingMashup} />
+
+                <div className="grid grid-cols-1 xl:grid-cols-2 gap-10 mb-10">
+                  <Deck ref={deckARef} id="A" track={trackA} masterBpm={masterBpm} masterKey={masterKey} syncEnabled={syncEnabled} onMagicMatch={handleMagicMatch} onReportBpm={handleBpmReport} />
+                  <Deck ref={deckBRef} id="B" track={trackB} masterBpm={masterBpm} masterKey={masterKey} syncEnabled={syncEnabled} onMagicMatch={handleMagicMatch} onReportBpm={handleBpmReport} />
                 </div>
 
-                {!uiVisible && (
-                    <button onClick={() => setUiVisible(true)} className="fixed top-4 right-4 z-50 bg-black/50 hover:bg-black/80 text-white p-3 rounded-full backdrop-blur-md transition-all border border-white/20"><Icon name="eye" size={24} /></button>
+                <MashupEngine
+                  onPlayMashup={handlePlayMashup} isPlaying={isPlayingMashup}
+                  masterBpm={masterBpm} setMasterBpm={setMasterBpm} masterKey={masterKey} setMasterKey={setMasterKey}
+                  syncEnabled={syncEnabled} setSyncEnabled={setSyncEnabled} onEQChange={() => {}} autoDjMode={autoDjMode} setAutoDjMode={setAutoDjMode}
+                />
+              </div>
+
+              <div className="fixed bottom-8 right-8 z-[60] flex flex-col items-end gap-4">
+                {aiPanelOpen && (
+                  <div className="w-[400px] bg-slate-900/98 backdrop-blur-3xl border border-white/20 rounded-[2.5rem] p-8 shadow-2xl animate-in slide-in-from-bottom-12 duration-500">
+                     <div className="flex items-center justify-between mb-8">
+                        <div className="flex items-center gap-4">
+                           <div className={`w-14 h-14 rounded-full flex items-center justify-center p-0.5 shadow-xl transition-all ${isJDActive ? 'bg-gradient-to-tr from-blue-500 via-indigo-600 to-pink-500' : 'bg-slate-800'}`}>
+                             <div className="w-full h-full bg-slate-950 rounded-full flex items-center justify-center relative overflow-hidden">
+                                {isJDActive && <div className={`absolute inset-0 bg-blue-500/10 ${isJDSpeaking ? 'animate-pulse' : ''}`} />}
+                                <Icon name="mic" size={24} className={`relative z-10 ${isJDActive ? 'text-white' : 'text-slate-600'}`} />
+                             </div>
+                           </div>
+                           <div>
+                              <h4 className="text-[12px] font-black uppercase tracking-[0.4em] text-blue-400">HOST: JD</h4>
+                              <p className="text-[10px] font-bold text-slate-400 flex items-center gap-2">
+                                {isJDActive ? (
+                                  <><span className={`w-2 h-2 rounded-full ${isJDSpeaking ? 'bg-red-500 animate-pulse' : 'bg-green-500'}`}></span> {isJDSpeaking ? 'TRANSMITTING' : 'LISTENING'}</>
+                                ) : 'OFF AIR'}
+                              </p>
+                           </div>
+                        </div>
+                        <button onClick={() => setAiPanelOpen(false)} className="text-slate-500 hover:text-white transition-colors p-2">
+                          <Icon name="stop" size={20} />
+                        </button>
+                     </div>
+
+                     <div className={`rounded-3xl p-6 mb-8 min-h-[100px] text-[15px] font-medium leading-relaxed italic border shadow-inner flex flex-col justify-center relative ${isJDActive ? 'bg-black/50 text-indigo-100 border-white/10' : 'bg-slate-950 text-slate-600 border-white/5'}`}>
+                        "{aiResponse}"
+                     </div>
+
+                     {isJDActive ? (
+                       <form onSubmit={(e) => { e.preventDefault(); handleAIDJInteraction(); }} className="relative mb-6">
+                          <input
+                            type="text" value={aiInput} onChange={(e) => setAiInput(e.target.value)}
+                            placeholder="Command JD..."
+                            className="w-full bg-white/5 border border-white/10 rounded-2xl py-4 pl-6 pr-16 text-[14px] focus:outline-none focus:border-indigo-500 transition-all placeholder:text-slate-600"
+                          />
+                          <button type="submit" className="absolute right-2 top-1/2 -translate-y-1/2 bg-indigo-600 p-2.5 rounded-xl hover:bg-indigo-500 shadow-lg">
+                            <Icon name="search" size={16} />
+                          </button>
+                       </form>
+                     ) : (
+                       <button onClick={activateJD} className="w-full py-4 bg-blue-600 hover:bg-blue-500 text-white rounded-2xl font-black text-xs uppercase tracking-[0.3em] mb-6 shadow-xl shadow-blue-500/20">
+                         ACTIVATE JD CORE
+                       </button>
+                     )}
+
+                     <div className="flex flex-wrap gap-2">
+                       {isJDActive && <button onClick={deactivateJD} className="px-4 py-2 rounded-xl bg-red-500/10 border border-red-500/20 text-[9px] font-black uppercase tracking-widest text-red-400 hover:bg-red-500 hover:text-white transition-all">Deactivate</button>}
+                       <button onClick={() => setKeyModalOpen(true)} className="px-4 py-2 rounded-xl bg-slate-500/10 border border-slate-500/20 text-[9px] font-black uppercase tracking-widest text-slate-400 hover:bg-slate-500 hover:text-white transition-all">Update Key</button>
+                     </div>
+                  </div>
                 )}
-            </>
-        );
-    };
+                <button
+                  onClick={() => { if(!aiPanelOpen) setAiPanelOpen(true); }}
+                  className={`w-28 h-28 rounded-full flex items-center justify-center shadow-3xl transition-all transform hover:scale-105 active:scale-95 border-4 ${isJDActive ? 'bg-indigo-600 border-indigo-300 shadow-indigo-500/40' : 'bg-slate-950 border-slate-800'}`}
+                >
+                  <div className="relative">
+                    <div className={`absolute inset-0 blur-3xl animate-pulse rounded-full ${isJDActive ? 'bg-indigo-500/30' : ''}`} />
+                    <Icon name="radio" size={48} className={`relative z-10 transition-colors ${isJDActive ? 'text-white' : 'text-slate-600'}`} />
+                  </div>
+                </button>
+              </div>
+            </div>
+          );
+        };
 
-    const root = ReactDOM.createRoot(document.getElementById('root'));
-    root.render(<App />);
-
-</script>
+        const root = createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
 </body>
 </html>
